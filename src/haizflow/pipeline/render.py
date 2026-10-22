@@ -1393,23 +1393,35 @@ def _original_subtitle_removal_prefix(
 
 def _ordered_subtitle_removal_prefix(payload, source_width, source_height, mode,
                                      source_start_seconds=0.0, *, static_mask=False):
-    """Compose each timed mask onto the result of the layer below it."""
+    """Overlay each timed mask, in order, onto one copy of the source.
+
+    Every mask samples the untouched source and is overlaid on a single running
+    frame. Splitting the running frame again for each mask made FFmpeg's frame
+    scheduling grow exponentially with the chain: 19 detected text rows took
+    minutes per frame.
+    """
     if not payload or "treatment_layers" not in payload:
         region = _source_subtitle_removal_region(payload, source_width, source_height)
         return (_original_subtitle_removal_prefix(region, source_width, source_height, mode, static_mask=static_mask)
                 if region else "")
     offset = float(payload.get("timeline_offset_seconds", source_start_seconds))
     prefixes = []
-    input_label = "[0:v]"
+    inputs = []
+    input_label = "[ocr_base]"
     for index, layer in enumerate(payload["treatment_layers"]):
         region = _source_subtitle_removal_region(layer.get("region"), source_width, source_height)
         if not region:
             continue
-        start = float(layer["start_ms"]) / 1000 - offset
-        end = start + float(layer["duration_ms"]) / 1000
-        if end <= 0:
+        windows = [(float(item["start_ms"]) / 1000 - offset, float(item["end_ms"]) / 1000 - offset)
+                   for item in layer.get("intervals") or ()]
+        if not windows:
+            start = float(layer["start_ms"]) / 1000 - offset
+            windows = [(start, start + float(layer["duration_ms"]) / 1000)]
+        windows = [(start, end) for start, end in windows if end > 0]
+        if not windows:
             continue
-        enable = f"gte(t,{max(0.0, start):.6f})*lt(t,{end:.6f})"
+        # A sum of window products is non-zero only while one window is open.
+        enable = "+".join(f"gte(t,{max(0.0, start):.6f})*lt(t,{end:.6f})" for start, end in windows)
         prefix = _original_subtitle_removal_prefix(
             region, source_width, source_height, layer.get("mode", mode), enable, static_mask=static_mask,
         )
@@ -1417,12 +1429,45 @@ def _ordered_subtitle_removal_prefix(payload, source_width, source_height, mode,
         # one source pad twice or defining an output label more than once.
         prefix = re.sub(r"\[([A-Za-z_][A-Za-z_0-9]*)\]",
                         lambda match: f"[ocr_{index}_{match[1]}]", prefix)
-        prefix = prefix.replace("[0:v]", input_label)
+        # Each mask prefix splits off its own clean copy to overlay onto; drop
+        # that copy and overlay onto the running frame instead.
+        clean = f"[ocr_{index}_source_clean]"
+        split = re.match(r"\[0:v\]split=(\d+)" + re.escape(clean), prefix)
+        if split is None:
+            raise ValueError("Unexpected subtitle mask filter layout.")
+        prefix = f"[ocr_{index}_input]split={int(split[1]) - 1}" + prefix[split.end():]
+        prefix = prefix.replace(clean + "[", input_label + "[")
+        # Blur and blend pass frames through untouched outside the windows,
+        # so a mask costs nothing while its text is not shown.
+        prefix = re.sub(r"(gblur=[^,;\[]*|blend=all_expr='[^']*')", rf"\1:enable='{enable}'", prefix)
+        inputs.append(f"[ocr_{index}_input]")
         input_label = f"[ocr_{index}_source_without_original]"
         prefixes.append(prefix)
+    head = f"[0:v]split={len(inputs) + 1}[ocr_base]{''.join(inputs)};" if prefixes else ""
     if not prefixes:
+        input_label = "[0:v]"
+    labels = []
+    for index, item in enumerate(payload.get("text_overlays") or ()):
+        windows = [(float(window["start_ms"]) / 1000 - offset, float(window["end_ms"]) / 1000 - offset)
+                   for window in item.get("intervals") or ()]
+        windows = [(start, end) for start, end in windows if end > 0]
+        if not windows or not os.path.isfile(str(item.get("path") or "")):
+            continue
+        enable = "+".join(f"gte(t,{max(0.0, start):.6f})*lt(t,{end:.6f})" for start, end in windows)
+        # A translated label sprite, centred on the masked source text. The
+        # movie source keeps the render command's inputs unchanged; inside the
+        # quotes only the drive colon needs escaping for the option parser.
+        path = os.path.abspath(item["path"]).replace("\\", "/").replace(":", "\\:")
+        labels.append(
+            f"movie='{path}',format=rgba[label_{index}];"
+            f"{input_label}[label_{index}]overlay=x='main_w*{float(item['x_percent']):.4f}/100-overlay_w/2':"
+            f"y='main_h*{float(item['y_percent']):.4f}/100-overlay_h/2':eof_action=repeat:"
+            f"enable='{enable}'[labelled_{index}];"
+        )
+        input_label = f"[labelled_{index}]"
+    if not prefixes and not labels:
         return ""
-    return "".join(prefixes) + f"{input_label}null[source_without_original];"
+    return head + "".join(prefixes) + "".join(labels) + f"{input_label}null[source_without_original];"
 
 
 def _watermark_filter(
@@ -1570,6 +1615,7 @@ def render_video(
     subtitle_style_overrides: dict[int, dict] | None = None,
     encoding_quality: int | None = None,
     preview_source_scale: bool = False,
+    subtitle_source_regions: dict[int, dict] | None = None,
     subtitle_timeline_offset_seconds: float | None = None,
     export_preset: str = "source",
     output_speed: float = 1.0,
@@ -1678,6 +1724,17 @@ def render_video(
             max(20, round(subtitle_height * float(raw.get("box_height_percent", 12)) / 100)),
         )
         cue_styles[int(index)] = (cue_style, cue_layout)
+    # Centre a cue on the source caption it translates; only the height
+    # changes, so wrapping and font size stay those of every other cue.
+    for index, region in (subtitle_source_regions or {}).items():
+        if int(index) in cue_styles:
+            continue  # An explicit per-cue style from the editor wins.
+        layout = _output_subtitle_region_layout(region, source_width, source_height, output_format, crop,
+                                                subtitle_width, subtitle_height)
+        if layout is None:
+            continue
+        centre = round(100 * (layout.y + layout.height / 2) / subtitle_height)
+        cue_styles[int(index)] = (effective_style.model_copy(update={"position_y_percent": centre}), ass_layout)
     _write_positioned_ass(
         srt_path,
         ass_path,

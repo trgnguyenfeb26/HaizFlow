@@ -51,7 +51,8 @@ def _read(downloader, url, platform, event, headers=None):
         raise _failure(platform, "connection failed; check the network") from exc
     with response:
         host = (urlparse(response.url).hostname or "").lower()
-        domains = {"Instagram": ("instagram.com",), "X": ("x.com", "twitter.com"), "Reddit": ("reddit.com",)}[platform]
+        domains = {"Instagram": ("instagram.com",), "X": ("x.com", "twitter.com"), "Reddit": ("reddit.com",),
+                   "Xiaohongshu": ("xiaohongshu.com", "rednote.com")}[platform]
         if not any(host == domain or host.endswith("." + domain) for domain in domains):
             raise _failure(platform, "unexpected redirect")
         status = response.status
@@ -79,6 +80,8 @@ def _read(downloader, url, platform, event, headers=None):
         raise _failure(platform, "empty response; access may be restricted")
     if "/accounts/login" in urlparse(response.url).path:
         raise _failure(platform, "login or access permission required")
+    if platform == "Xiaohongshu" and urlparse(response.url).path.rstrip("/") in {"/login", "/website-login/captcha"}:
+        raise _failure(platform, "link expired or missing its share token; copy the profile link again")
     return body
 
 
@@ -291,6 +294,59 @@ def _x(downloader, username, limit, event):
     return {"title": user.get("name") or username, "entries": entries}
 
 
+def _xiaohongshu_state(body):
+    match = re.search(r"window\.__INITIAL_STATE__\s*=\s*(.*?)</script>", body, re.S)
+    if not match:
+        raise _failure("Xiaohongshu", "page format changed or access restricted")
+    # The state is a JavaScript literal: map ``undefined`` and ``new Set([...])``
+    # (used on rednote.com) to their JSON equivalents.
+    state = re.sub(r"new Set\((\[[^\]]*\])\)", r"\1", re.sub(r"\bundefined\b", "null", match.group(1)))
+    return _json(state, "Xiaohongshu")
+
+
+def _xiaohongshu(downloader, url, limit, event):
+    """Read the notes a profile page embeds for anonymous visitors.
+
+    Only the first page (about 30 notes) is embedded; later pages need signed,
+    logged-in API calls, which are not made. Each note keeps its own share
+    token, without which its page shows no video. The profile is read on the
+    domain the user pasted, where their login cookies belong.
+    """
+    user = _object(_xiaohongshu_state(_read(downloader, url, "Xiaohongshu", event)).get("user"))
+    nickname = str(_object(_object(user.get("userPageData")).get("basicInfo")).get("nickname") or "")
+    entries, seen = [], set()
+    for group in _list(user.get("notes")):
+        for item in (group if isinstance(group, list) else [group]):
+            _cancel(event)
+            item = _object(item)
+            card = _object(item.get("noteCard"))
+            note_id = str(card.get("noteId") or item.get("id") or "")
+            token = str(item.get("xsecToken") or card.get("xsecToken") or "")
+            if card.get("type") != "video" or not re.fullmatch(r"[0-9a-f]{24}", note_id) or not token:
+                continue
+            if note_id in seen:
+                continue
+            seen.add(note_id)
+            entries.append({
+                "id": note_id,
+                "url": f"https://www.xiaohongshu.com/discovery/item/{note_id}?"
+                       + urlencode({"xsec_token": token, "xsec_source": "pc_user"}),
+                "title": card.get("displayTitle") or f"Video {note_id}",
+                "uploader": nickname,
+                "thumbnail": str(_object(card.get("cover")).get("urlDefault") or ""),
+            })
+            if len(entries) >= limit:
+                return {"title": nickname, "entries": entries}
+    if not entries:
+        hidden = any(isinstance(item, dict) and item.get("xsecToken")
+                     for group in _list(user.get("notes")) for item in (group if isinstance(group, list) else [group]))
+        # Visitors who are not logged in see each note's token but not its ID,
+        # so no note page can be opened from the profile.
+        raise _failure("Xiaohongshu", "video IDs are only shown to logged-in visitors; use a browser session or "
+                                      "cookies.txt" if hidden else "no public notes or access restricted")
+    return {"title": nickname, "entries": entries}
+
+
 def _reddit(downloader, path, limit, event):
     entries, seen, cursors = [], set(), set()
     cursor = ""
@@ -344,6 +400,9 @@ def inspect_profile(url: str, platform: str, auth: dict, limit: int, event: thre
         allowed = {"new", "hot", "top"} if parts[0] == "r" else {"submitted"}
         if len(parts) == 3 and parts[2] not in allowed:
             raise _failure(platform, "invalid profile link")
+    elif platform == "Xiaohongshu":
+        if len(parts) != 3 or parts[:2] != ["user", "profile"] or not re.fullmatch(r"[0-9a-f]{24}", parts[2]):
+            raise _failure(platform, "invalid profile link")
     else:
         raise ValueError("Unsupported profile reader.")
     limit = min(1000, max(1, limit))
@@ -352,5 +411,7 @@ def inspect_profile(url: str, platform: str, auth: dict, limit: int, event: thre
             return _instagram(downloader, parts[0], limit, event)
         if platform == "X":
             return _x(downloader, parts[0], limit, event)
+        if platform == "Xiaohongshu":
+            return _xiaohongshu(downloader, url, limit, event)
         path = (f"/r/{parts[1]}/new" if parts[0] == "r" else f"/user/{parts[1]}/submitted")
         return _reddit(downloader, path, limit, event)

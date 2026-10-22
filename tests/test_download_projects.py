@@ -120,3 +120,24 @@ class DownloadProjectTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ChannelSessionSelectionTests(unittest.TestCase):
+    def test_channel_scan_keeps_the_session_chosen_on_the_page(self):
+        controller = MediaDownloadController()
+        try:
+            controller.setChannelCookieBrowser("chrome")
+            with tempfile.TemporaryDirectory() as output, \
+                    mock.patch.object(controller._channel_importer, "inspect") as inspect:
+                controller._start_channel_scan({
+                    "url": "https://www.rednote.com/user/profile/6125a9ee0000000001000c9e?xsec_token=a",
+                    "platform": "xiaohongshu", "ranking": "newest", "limit": 20,
+                    "duration_filter": "all", "scan_scope": 0, "output": output,
+                })
+            inspect.assert_called_once()
+            # The selector stays on Chrome and the scan uses that session.
+            self.assertEqual(controller.channelCookieBrowser, "chrome")
+            controller.clearChannelAuthentication()
+            self.assertEqual(controller.channelCookieBrowser, "")
+        finally:
+            controller.shutdown()

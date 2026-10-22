@@ -128,12 +128,16 @@ class ManualEditorDocumentModel(QObject):
         )
         result: list[dict] = []
         assets_by_id = {asset.asset_id: asset for asset in self._document.assets}
-        from haizflow.services.ocr_layers import EXTRA_LAYERS_ENABLED
+        from haizflow.services import video_store
+        from haizflow.services.ocr_layers import EXTRA_LAYERS_ENABLED, primary_intervals
 
         for item in values:
             if item.kind == "ocr" and not EXTRA_LAYERS_ENABLED:
                 continue
             payload = item.model_dump()
+            if item.metadata.get("primary_ocr"):
+                payload["ocr_intervals"] = primary_intervals(
+                    video_store.get_video(self._video_id), self._document, item)
             asset = assets_by_id.get(item.asset_id)
             if asset is not None:
                 payload["asset_duration_ms"] = asset.duration_ms

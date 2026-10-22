@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 
@@ -103,6 +104,8 @@ def render_text_overlay_sprite(
         align=style.alignment,
         stroke_width=stroke_width,
     )
+    # Pillow measures multi-line text in fractional pixels; image sizes are whole.
+    bounds = (math.floor(bounds[0]), math.floor(bounds[1]), math.ceil(bounds[2]), math.ceil(bounds[3]))
     text_width = max(1, bounds[2] - bounds[0])
     text_height = max(1, bounds[3] - bounds[1])
     padding = max(0, round(style.background_padding))

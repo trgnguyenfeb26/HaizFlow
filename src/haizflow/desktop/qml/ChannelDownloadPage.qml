@@ -24,7 +24,8 @@ Item {
         { "label": "Douyin", "value": "douyin", "platform": "douyin" },
         { "label": "Bilibili", "value": "bilibili", "platform": "bilibili" },
         { "label": "Facebook", "value": "facebook", "platform": "facebook" },
-        { "label": "X", "value": "x", "platform": "x" }
+        { "label": "X", "value": "x", "platform": "x" },
+        { "label": "Xiaohongshu", "value": "xiaohongshu", "platform": "xiaohongshu" }
     ]
 
     function saveForm() {
@@ -62,7 +63,24 @@ Item {
             return qsTr("Dán liên kết trang cá nhân Douyin")
         if (selectedPlatform === "youtube")
             return qsTr("Dán liên kết kênh YouTube")
+        if (selectedPlatform === "xiaohongshu")
+            return qsTr("Dán liên kết trang cá nhân Xiaohongshu (giữ cả xsec_token)")
         return qsTr("Dán liên kết hồ sơ hoặc kênh công khai")
+    }
+
+    readonly property var sessionOptions: [
+        { "label": qsTr("Không dùng"), "value": "" },
+        { "label": qsTr("Chrome (đang đăng nhập)"), "value": "chrome" },
+        { "label": qsTr("Edge (đang đăng nhập)"), "value": "edge" },
+        { "label": qsTr("File cookies.txt…"), "value": "file" }
+    ]
+
+    function sessionIndex() {
+        if (root.downloader.channelCookieFile.length > 0)
+            return 3
+        return Math.max(0, root.sessionOptions.findIndex(function(option) {
+            return option.value === root.downloader.channelCookieBrowser
+        }))
     }
 
     function contentOptions() {
@@ -225,6 +243,54 @@ Item {
                         url: channelUrl.text
                         visible: root.selectedPlatform === "douyin" || requiresSession
                         operationBusy: root.downloader.hasWork || root.downloader.videoPreviewBusy
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        // Douyin keeps its own managed session above.
+                        visible: root.selectedPlatform !== "douyin"
+                        spacing: Theme.space4
+                        Text { text: qsTr("Phiên đăng nhập"); color: Theme.textMuted; font.pixelSize: Theme.label }
+                        AppComboBox {
+                            id: sessionSelector
+                            objectName: "channelSessionSelector"
+                            Layout.fillWidth: true
+                            model: root.sessionOptions
+                            textRole: "label"
+                            valueRole: "value"
+                            currentIndex: root.sessionIndex()
+                            enabled: !root.channelActive
+                            Accessible.name: qsTr("Phiên đăng nhập")
+                            onActivated: function(index) {
+                                const value = String(root.sessionOptions[index].value)
+                                if (value === "file")
+                                    root.downloader.browseChannelCookieFile()
+                                else if (value.length > 0)
+                                    root.downloader.setChannelCookieBrowser(value)
+                                else
+                                    root.downloader.clearChannelAuthentication()
+                                // Show what is in effect, e.g. after a cancelled file dialog.
+                                currentIndex = Qt.binding(function() { return root.sessionIndex() })
+                            }
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            visible: root.downloader.channelCookieFile.length > 0
+                            text: root.downloader.channelCookieFile
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.label
+                            elide: Text.ElideMiddle
+                            textFormat: Text.PlainText
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            visible: root.selectedPlatform === "xiaohongshu"
+                            text: qsTr("Xiaohongshu chỉ hiện danh sách video cho người đã đăng nhập. Chrome và Edge trên Windows mã hóa cookie nên app không đọc trực tiếp được: hãy đăng nhập rồi xuất cookies.txt bằng tiện ích trình duyệt (ví dụ \"Get cookies.txt LOCALLY\") từ đúng trang bạn dán link (rednote.com hoặc xiaohongshu.com). Chỉ lấy được khoảng 30 video mới nhất.")
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.label
+                            wrapMode: Text.WordWrap
+                            textFormat: Text.PlainText
+                        }
                     }
 
                     DownloadDestinationRow {

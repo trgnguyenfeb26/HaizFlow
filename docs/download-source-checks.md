@@ -22,6 +22,7 @@ removed source. X accepts both x.com and twitter.com video links.
 | X | Live 3-second video downloaded; FFmpeg video/audio verified | Deterministic shared audio route; no new live audio probe | Public rendered profile reader verified for supplied `cb_doge`; two candidates and an 11-second silent download verified |
 | Reddit | Temporarily disabled in the app | Temporarily disabled in the app | Hidden from selector; readers/schema retained for compatibility and future work |
 | Streamable | Live metadata, 12-second public sample | Live AAC download; FFmpeg verified | Not offered as a channel source |
+| Xiaohongshu | xhslink.com share link resolved through its login redirect; live metadata for a 36-second public note (2026-10-22). Browser impersonation from the first attempt: without it the note page carries no streams | Shared audio route; no live audio probe | Not offered as a channel source |
 
 Video-only media can be saved on the **Downloads / Video** page. Audio-bearing
 formats are preferred when available. Project source imports keep their strict

@@ -322,3 +322,54 @@ def test_primary_region_migration_is_idempotent_and_repairs_missing_clip():
     assert ocr_layers.ensure_primary(value)
     assert len(value.tracks) == len(value.clips) == 1
     assert not ocr_layers.ensure_primary(value)
+
+
+def subtitle(start_ms, duration_ms, *, enabled=True):
+    from haizflow.schemas.editor import EditorClip
+    return EditorClip(clip_id=f"subtitle-{start_ms}", track_id="subtitles", kind="subtitle",
+                      start_ms=start_ms, duration_ms=duration_ms, enabled=enabled)
+
+
+def primary_clip(value):
+    return editor_documents.clip_by_id(value, ocr_layers.PRIMARY_CLIP)
+
+
+def test_primary_region_follows_padded_merged_subtitle_cues():
+    value = document()
+    assert ocr_layers.subtitle_intervals(value, primary_clip(value)) is None
+    value.clips += [subtitle(100, 400), subtitle(800, 300), subtitle(2100, 500),
+                    subtitle(2600, 100, enabled=False), subtitle(3700, 900)]
+    # Padding clips to the region; a 300 ms pause merges, a 500 ms one splits.
+    assert ocr_layers.subtitle_intervals(value, primary_clip(value)) == [
+        {"start_ms": 0, "end_ms": 1350}, {"start_ms": 1850, "end_ms": 2850},
+        {"start_ms": 3450, "end_ms": 4000}]
+    primary = next(item for item in ocr_layers.layers(SimpleNamespace(), value, REGION) if item["primary"])
+    assert primary["intervals"][0] == {"start_ms": 0, "end_ms": 1350}
+
+
+def test_trimmed_primary_without_cues_inside_has_no_mask_window():
+    value = document()
+    primary_clip(value).start_ms, primary_clip(value).duration_ms = 2000, 1000
+    value.clips.append(subtitle(100, 400))
+    assert ocr_layers.subtitle_intervals(value, primary_clip(value)) == []
+
+
+def test_subtitle_windows_mask_only_while_captions_show():
+    payload = {"treatment_layers": [{"region": REGION, "start_ms": 0, "duration_ms": 2000, "mode": "blur",
+                                     "intervals": [{"start_ms": 0, "end_ms": 500},
+                                                   {"start_ms": 1500, "end_ms": 2000}]}]}
+    prefix = _ordered_subtitle_removal_prefix(payload, 128, 96, "blur")
+    assert "gte(t,0.000000)*lt(t,0.500000)+gte(t,1.500000)*lt(t,2.000000)" in prefix
+
+    def frames(filters):
+        command = [_binary("ffmpeg"), "-v", "error", "-f", "lavfi", "-i",
+                   "testsrc2=size=128x96:rate=4:duration=2"]
+        if filters:
+            command += ["-filter_complex", filters + "[source_without_original]null[out]", "-map", "[out]"]
+        command += ["-threads", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"]
+        result = subprocess.run(command, check=True, capture_output=True)
+        return np.frombuffer(result.stdout, dtype=np.uint8).reshape((-1, 96, 128, 3)).astype(float)
+
+    difference = np.abs(frames(prefix) - frames(""))
+    assert difference[2:6].mean() < 0.5
+    assert difference[[0, 1, 6, 7], 60:75, 30:90].mean() > 5

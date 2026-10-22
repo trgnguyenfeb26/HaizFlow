@@ -33,6 +33,9 @@ SUPPORTED_VIDEO_HOSTS = {
     "tiktok.com": "TikTok",
     "x.com": "X",
     "twitter.com": "X",
+    "xhslink.com": "Xiaohongshu",
+    "xiaohongshu.com": "Xiaohongshu",
+    "rednote.com": "Xiaohongshu",
     "youtu.be": "YouTube",
     "youtube.com": "YouTube",
 }
@@ -207,7 +210,7 @@ def validate_video_url(value: str) -> tuple[str, str]:
     if not platform:
         raise ValueError(
             "This link is not from a supported source. Use YouTube, TikTok, Douyin, Bilibili, "
-            "Instagram, Facebook, X, or Streamable."
+            "Instagram, Facebook, X, Xiaohongshu, or Streamable."
         )
     if platform == "Douyin":
         modal_ids = parse_qs(parsed.query).get("modal_id", [])
@@ -219,7 +222,23 @@ def validate_video_url(value: str) -> tuple[str, str]:
             video = re.fullmatch(r"/(?:share/)?video/([0-9]{10,25})/?", parsed.path)
             if video:
                 url = f"https://www.douyin.com/video/{video[1]}"
+    if platform == "Xiaohongshu" and not _is_xhslink(parsed.hostname):
+        from haizflow.services.xiaohongshu_video import note_url_from_redirect
+        url = note_url_from_redirect(url)
+        if not url:
+            raise ValueError("The Xiaohongshu link does not point to a note.")
     return url, platform
+
+
+def _is_xhslink(hostname: str | None) -> bool:
+    hostname = (hostname or "").lower().rstrip(".")
+    return hostname == "xhslink.com" or hostname.endswith(".xhslink.com")
+
+
+def _impersonate_on_attempt(platform: str, attempt: int) -> bool:
+    # Xiaohongshu serves note pages without media streams to Python's TLS
+    # fingerprint, so it starts as a browser instead of waiting for a retry.
+    return platform == "Xiaohongshu" or attempt > 0
 
 
 def _youtube_dl_options(auth: dict | None = None, *, impersonate: bool = False) -> dict:
@@ -256,8 +275,31 @@ def _youtube_dl_options(auth: dict | None = None, *, impersonate: bool = False) 
     if cookie_file:
         options["cookiefile"] = cookie_file
     elif cookie_browser in {"chrome", "edge"}:
-        options["cookiesfrombrowser"] = (cookie_browser,)
+        options["cookiesfrombrowser"] = _browser_cookie_source(cookie_browser)
     return options
+
+
+_BROWSER_PROFILE_DIRS = {
+    "chrome": ("Google", "Chrome", "User Data"),
+    "edge": ("Microsoft", "Edge", "User Data"),
+}
+
+
+def _browser_cookie_source(browser: str) -> tuple:
+    """Point yt-dlp at the user's real browser profile.
+
+    HaizFlow redirects %LOCALAPPDATA% into its own runtime folder, and yt-dlp
+    locates browser profiles through that variable, so it would look for the
+    browser inside HaizFlow's data. An explicit profile directory also makes
+    it read the decryption key beside that profile.
+    """
+    from haizflow.config import NATIVE_WINDOWS_USERPROFILE
+
+    if os.name == "nt" and NATIVE_WINDOWS_USERPROFILE:
+        profile = Path(NATIVE_WINDOWS_USERPROFILE, "AppData", "Local", *_BROWSER_PROFILE_DIRS[browser])
+        if profile.is_dir():
+            return (browser, str(profile))
+    return (browser,)
 
 
 def _load_yt_dlp():
@@ -281,6 +323,10 @@ def _extract_video_info(downloader, url: str, *, download: bool, cancel_event=No
         adapter = get_douyin_adapter(auth)
         downloader.add_info_extractor(HaizFlowDouyinIE(adapter=adapter, cancel_event=cancel_event))
         return downloader.extract_info(url, download=download, ie_key=HaizFlowDouyinIE.ie_key())
+    if _is_xhslink(urlparse(url).hostname):
+        from haizflow.services.xiaohongshu_video import HaizFlowXhsLinkIE
+        downloader.add_info_extractor(HaizFlowXhsLinkIE())
+        return downloader.extract_info(url, download=download, ie_key=HaizFlowXhsLinkIE.ie_key())
     return downloader.extract_info(url, download=download)
 
 
@@ -504,8 +550,8 @@ def inspect_video_url(url: str, cancel_event: threading.Event | None = None, aut
     info = None
     for attempt in range(attempts):
         try:
-            info = _inspect_video_info(yt_dlp, normalized_url, impersonate=attempt > 0, auth=auth,
-                                       cancel_event=cancel_event)
+            info = _inspect_video_info(yt_dlp, normalized_url, auth=auth, cancel_event=cancel_event,
+                                       impersonate=_impersonate_on_attempt(platform, attempt))
             break
         except Exception as exc:
             if cancel_event and cancel_event.is_set():
@@ -535,6 +581,8 @@ def inspect_video_url(url: str, cancel_event: threading.Event | None = None, aut
         resolved_platform = "Bilibili"
     elif "twitter" in resolved_platform.lower():
         resolved_platform = "X"
+    elif "xiaohongshu" in resolved_platform.lower():
+        resolved_platform = "Xiaohongshu"
 
     title = str(info.get("title") or "Untitled video").strip()
     return VideoMetadata(
@@ -576,7 +624,7 @@ def download_audio(
         for stale in target.parent.glob(f"{target.stem}.source.*"):
             stale.unlink(missing_ok=True)
         options = _youtube_dl_options(_ytdlp_auth_for_url(auth, normalized_url),
-                                     impersonate=attempt > 0 and platform != "Bilibili")
+                                     impersonate=_impersonate_on_attempt(platform, attempt) and platform != "Bilibili")
         options.update(
             {
                 "outtmpl": str(target.with_name(f"{target.stem}.source.%(ext)s")),
@@ -752,7 +800,8 @@ def download_video(
         if cancel_event and cancel_event.is_set():
             raise DownloadCancelled("Video download cancelled.")
         options = _youtube_dl_options(_ytdlp_auth_for_url(auth, metadata.url),
-                                     impersonate=attempt > 0 and metadata.platform != "Bilibili")
+                                     impersonate=_impersonate_on_attempt(metadata.platform, attempt)
+                                     and metadata.platform != "Bilibili")
         options.update(
             {
                 "outtmpl": os.path.join(workspace, "%(title).120B [%(id)s].%(ext)s"),

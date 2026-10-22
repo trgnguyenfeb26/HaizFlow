@@ -1832,7 +1832,7 @@ def _run_image(video, reporter) -> None:
                 str(staging),
                 video.video_id,
                 progress_callback=lambda current, total: reporter.update(
-                    5 + round(90 * current / max(1, total)),
+                    5 + round(40 * current / max(1, total)),
                     "manual_image",
                     f"Đang phân tích khung hình {current}/{total}",
                     current,
@@ -1855,6 +1855,52 @@ def _run_image(video, reporter) -> None:
     else:
         manual_artifacts.activate(video.video_id, "ocr_region", expected)
     _update_files(video.video_id, ocr_region=cached["resolved_outputs"]["region"])
+    _scan_text_layers(video, reporter)
+
+
+def _scan_text_layers(video, reporter) -> None:
+    """Find when and where text is on screen; masks fall back to subtitle cues without it."""
+    from haizflow.pipeline.text_masks import detect_text_layers
+    from haizflow.services.ocr_layers import text_layers_path
+
+    try:
+        detect_text_layers(
+            _video_input(video),
+            text_layers_path(video),
+            video.video_id,
+            progress_callback=lambda current, total: reporter.update(
+                45 + round(54 * current / max(1, total)),
+                "manual_image",
+                f"Đang dò chữ trên hình {current}/{total}",
+                current,
+                total,
+            ),
+        )
+    except Exception as exc:
+        if "cancelled" in str(exc).lower():
+            raise
+        video_store.log_to_video(video.video_id, f"On-screen text scan failed; masking follows subtitles: {exc}")
+        return
+    _lay_out_translated_text(video, reporter)
+
+
+def _lay_out_translated_text(video, reporter) -> None:
+    """Move subtitles onto the source captions and translate on-screen labels."""
+    from haizflow.services import text_layout
+
+    reporter.update(99, "manual_image", "Đang dịch chữ trên hình")
+    try:
+        result = text_layout.apply(video)
+    except Exception as exc:
+        if "cancelled" in str(exc).lower():
+            raise
+        # Without a translator the subtitles can still follow the captions.
+        video_store.log_to_video(video.video_id, f"On-screen label translation failed: {exc}")
+        result = text_layout.apply(video, translate=lambda _video, _texts: {})
+    video_store.log_to_video(
+        video.video_id,
+        f"Placed {result['positioned']} subtitles on source captions; added {result['labels']} translated labels.",
+    )
 
 
 def _run_voice(video, reporter) -> None:

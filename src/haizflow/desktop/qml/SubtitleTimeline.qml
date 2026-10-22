@@ -566,6 +566,8 @@ Rectangle {
                                 readonly property var modelData: root.editorClips[entryIndex] || ({})
                                 readonly property string clipId: String(modelData.clip_id || "")
                                 readonly property bool selected: root.selectedClipIds.indexOf(clipId) >= 0
+                                // The detected region masks only while subtitles show.
+                                readonly property var ocrIntervals: modelData.ocr_intervals || null
                                 property int previewStartMs: Number(modelData.start_ms || 0)
                                 property int previewDurationMs: Number(modelData.duration_ms || 0)
                                 property int gestureStartMs: previewStartMs
@@ -577,11 +579,12 @@ Rectangle {
                                 width: Math.max(8, previewDurationMs / 1000 * root.pixelsPerSecond)
                                 height: layerTrack.combinedVoice ? 16 : layerTrack.height - 6
                                 radius: Theme.radiusTiny
-                                color: String(modelData.kind || "") === "voice"
+                                color: ocrIntervals ? "transparent"
+                                    : String(modelData.kind || "") === "voice"
                                     ? Theme.successMuted
                                     : String(modelData.kind || "") === "audio"
                                         ? Theme.interactiveMuted : Theme.warningMuted
-                                border.width: selected ? 2 : 1
+                                border.width: selected ? 2 : ocrIntervals ? 0 : 1
                                 border.color: selected ? Theme.focus
                                     : String(modelData.kind || "") === "voice"
                                         ? Theme.success : Theme.interactiveOutline
@@ -591,6 +594,21 @@ Rectangle {
                                     if (!manipulating) {
                                         previewStartMs = Number(modelData.start_ms || 0)
                                         previewDurationMs = Number(modelData.duration_ms || 0)
+                                    }
+                                }
+
+                                Repeater {
+                                    model: editorClip.ocrIntervals || []
+                                    delegate: Rectangle {
+                                        required property var modelData
+                                        x: (Number(modelData.start_ms) - editorClip.previewStartMs) / 1000 * root.pixelsPerSecond
+                                        width: Math.max(2, (Number(modelData.end_ms) - Number(modelData.start_ms))
+                                            / 1000 * root.pixelsPerSecond)
+                                        height: editorClip.height
+                                        radius: Theme.radiusTiny
+                                        color: Theme.warningMuted
+                                        border.width: 1
+                                        border.color: Theme.interactiveOutline
                                     }
                                 }
 
