@@ -877,6 +877,40 @@ def _original_subtitle_region_for_render(video, reporter, video_dir, *, pipeline
     return region
 
 
+def _text_layout_for_render(video, region, srt_output, transcript_json, removal_mode, subtitle_style, reporter):
+    """Timed source-text masks, caption placement and translated labels, or ``None``.
+
+    The plain detected region still renders when the scan cannot run; a failed
+    label translation keeps the masks and caption placement.
+    """
+    from haizflow.services import text_layout
+
+    def report_scan(current: int, total: int) -> None:
+        reporter.update(87, "detecting_original_subtitles", f"Scanning on-screen text ({current}/{total})",
+                        current, total)
+
+    try:
+        result = text_layout.batch_render_layout(
+            video, region, srt_output, transcript_json,
+            "patch" if str(removal_mode).lower() in {"patch", "inpaint"} else "blur",
+            subtitle_style.font_family, progress_callback=report_scan,
+        )
+    except Exception as exc:
+        if "cancelled" in str(exc).lower():
+            raise
+        log_to_video(video.video_id, f"On-screen text scan failed; masking the detected region only: {exc}",
+                     level="WARNING", component="OCR")
+        return None
+    log_to_video(
+        video.video_id,
+        f"On-screen text: {len(result['region']['treatment_layers'])} timed masks, "
+        f"{len(result['cue_regions'])} subtitles on source captions, "
+        f"{len(result['region']['text_overlays'])} translated labels.",
+        component="OCR",
+    )
+    return result
+
+
 def _finish_after_translation(video, reporter, video_dir, original_audio_target, *, stop_after=None):
     video_id = video.video_id
     video_input = _required_video_path(video, "video_input", must_exist=True)
@@ -1077,6 +1111,17 @@ def _finish_after_translation(video, reporter, video_dir, original_audio_target,
     original_subtitle_intervals = _source_subtitle_intervals(
         os.path.join(video_dir, "temp", "source_segments.json")
     )
+    subtitle_source_regions: dict[int, dict] = {}
+    text_layout_signature = ""
+    if remove_original_subtitles:
+        text_layout = _text_layout_for_render(
+            video, original_subtitle_region, srt_output, transcript_json,
+            original_subtitle_removal_mode, subtitle_style, reporter,
+        )
+        if text_layout:
+            original_subtitle_region = text_layout["region"]
+            subtitle_source_regions = text_layout["cue_regions"]
+            text_layout_signature = text_layout["signature"]
     render_signature = _signature(
         *(["output-speed-v1", video.output_speed] if getattr(video, "output_speed", 1.0) != 1.0 else []),
         timeline_signature,
@@ -1108,6 +1153,7 @@ def _finish_after_translation(video, reporter, video_dir, original_audio_target,
         getattr(video, "watermark_italic", True),
         manual_subtitle_layout,
         getattr(video, "export_preset", "source"),
+        *(["on-screen-text-layout-v1", text_layout_signature] if text_layout_signature else []),
     )
     from haizflow.services.video_export import current_render, preset_settings
 
@@ -1161,6 +1207,7 @@ def _finish_after_translation(video, reporter, video_dir, original_audio_target,
             encoding_quality=int(preset_settings(getattr(video, "export_preset", "source"))["crf"]),
             export_preset=getattr(video, "export_preset", "source"),
             output_speed=getattr(video, "output_speed", 1.0),
+            subtitle_source_regions=subtitle_source_regions or None,
         )
         _mark_checkpoint(video, "render", render_signature)
 

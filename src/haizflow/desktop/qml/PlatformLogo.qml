@@ -13,6 +13,7 @@ Item {
         "instagram": { "glyph": "◎", "color": "#C94B83" },
         "facebook": { "glyph": "f", "color": "#4D8DFF" },
         "x": { "glyph": "X", "color": "#A5B4C8" },
+        "xiaohongshu": { "glyph": "小", "color": "#FF2442" },
         "reddit": { "glyph": "r", "color": "#F36D45" }
     })[key] || { "glyph": "•", "color": "#64748B" }
 

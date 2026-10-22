@@ -22,6 +22,7 @@ class ChannelImportRequest(BaseModel):
         "twitch",
         "reddit",
         "vk",
+        "xiaohongshu",
     ] = ""
     ranking: Literal["newest", "popular"] = "newest"
     limit: int = Field(default=20, ge=1, le=100)

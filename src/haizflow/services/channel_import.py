@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import threading
 import uuid
@@ -40,6 +41,8 @@ SUPPORTED_CHANNEL_HOSTS = {
     "x.com": "X",
     "twitter.com": "X",
     "reddit.com": "Reddit",
+    "xiaohongshu.com": "Xiaohongshu",
+    "rednote.com": "Xiaohongshu",
 }
 SHORT_VIDEO_SECONDS = 180
 SESSION_SCHEMA_VERSION = 1
@@ -80,7 +83,7 @@ def validate_channel_url(value: str, expected_platform: str = "") -> tuple[str, 
     _check_channel_available(platform)
     if not platform:
         raise ValueError(
-            "Only public YouTube, TikTok, Douyin, Bilibili, Facebook, and X profiles are supported."
+            "Only public YouTube, TikTok, Douyin, Bilibili, Facebook, X, and Xiaohongshu profiles are supported."
         )
     expected = str(expected_platform or "").strip().lower()
     platform_key = platform.lower()
@@ -102,6 +105,8 @@ def validate_channel_url(value: str, expected_platform: str = "") -> tuple[str, 
         raise ValueError("Paste a Douyin profile link, not an individual video link.")
     elif platform == "Douyin" and "/user/" not in lowered_path and not parsed.hostname.lower().startswith("v."):
         raise ValueError("Paste a Douyin profile link.")
+    elif platform == "Xiaohongshu" and not re.fullmatch(r"/user/profile/[0-9a-f]{24}", lowered_path):
+        raise ValueError("Paste a Xiaohongshu profile link, not an individual note link.")
     else:
         individual_video_markers = {
             "Bilibili": ("/video/",),
@@ -121,6 +126,11 @@ def validate_channel_url(value: str, expected_platform: str = "") -> tuple[str, 
         if not profile_id.isdigit():
             raise ValueError("Paste a public Facebook page or profile link.")
         query = urlencode({"id": profile_id})
+    if platform == "Xiaohongshu":
+        # Anonymous visitors only see a profile through the token in its shared
+        # link; without it the site redirects to the login page.
+        params = parse_qs(parsed.query)
+        query = urlencode({key: params[key][0] for key in ("xsec_token", "xsec_source") if params.get(key)})
     if not path:
         raise ValueError("Paste a public profile or channel link, not the platform home page.")
     normalized = urlunparse(("https", parsed.hostname.lower(), path, "", query, ""))
@@ -408,7 +418,7 @@ def _scan_with_ytdlp(
         if platform == "Facebook":
             from haizflow.services.facebook_channel import inspect_page
             info = inspect_page(collection_url, _auth_options(request), per_collection_limit or 1000, cancel_event)
-        elif platform in {"Instagram", "X", "Reddit"}:
+        elif platform in {"Instagram", "X", "Reddit", "Xiaohongshu"}:
             from haizflow.services.social_channel import inspect_profile
             info = inspect_profile(collection_url, platform, _auth_options(request), per_collection_limit or 1000, cancel_event)
         else:
@@ -442,7 +452,7 @@ def _scan_with_ytdlp(
 
     to_hydrate = [candidate for candidate in candidates if _needs_hydration(candidate, request)]
     if to_hydrate:
-        workers = 1 if platform in {"TikTok", "Instagram", "X", "Reddit"} else min(4, len(to_hydrate))
+        workers = 1 if platform in {"TikTok", "Instagram", "X", "Reddit", "Xiaohongshu"} else min(4, len(to_hydrate))
         hydrated_by_id = {}
         task_queue: Queue = Queue()
         result_queue: Queue = Queue()

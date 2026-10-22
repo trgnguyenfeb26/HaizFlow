@@ -20,6 +20,7 @@ VIDEO_LINKS = {
     "Facebook": "https://www.facebook.com/watch/?v=123",
     "X": "https://twitter.com/creator/status/123",
     "Streamable": "https://streamable.com/demo",
+    "Xiaohongshu": "http://xhslink.com/o/143WGzf54Gy",
 }
 
 

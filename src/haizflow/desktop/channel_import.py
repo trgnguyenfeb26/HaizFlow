@@ -289,6 +289,11 @@ class ChannelImportCoordinator(QObject):
         if self._cookie_file:
             text = text.replace(self._cookie_file, "cookies.txt")
             text = text.replace(os.path.normpath(self._cookie_file), "cookies.txt")
+        if self._cookie_browser and ("dpapi" in text.lower() or "decrypt" in text.lower()):
+            # Chrome and Edge bind their cookie encryption to the browser itself
+            # (App-Bound Encryption); no other program can read them.
+            return ("This browser encrypts its cookies for its own use only. "
+                    "Export cookies.txt with a browser extension and choose it instead.")
         if "cookie" in text.lower() and (self._cookie_file or self._cookie_browser):
             return "Browser session or cookies could not be read. Close the browser or choose cookies.txt and try again."
         return text

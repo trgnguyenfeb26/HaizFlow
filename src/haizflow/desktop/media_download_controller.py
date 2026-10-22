@@ -682,9 +682,8 @@ class MediaDownloadController(QObject):
         self._active_channel_output_directory = task["output"]
         self._channel_starting = True
         try:
-            # Standalone downloads deliberately use public content only. The
-            # project import flow keeps its separate opt-in authentication UI.
-            self._channel_importer.clearAuthentication()
+            # Authentication is whatever the page's session selector shows:
+            # none unless the user picked a browser or cookies.txt there.
             self._channel_importer.attach_project(self._channel_project_key, self._channel_workspace, set())
             self._channel_importer.inspect(
                 task["url"],
