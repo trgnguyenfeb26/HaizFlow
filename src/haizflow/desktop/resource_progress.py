@@ -62,6 +62,7 @@ def pack_label(unit: str, language: str) -> str:
         "model-demucs-cpu": ("Demucs CPU", "Demucs CPU"),
         "model-demucs-gpu": ("Demucs GPU NVIDIA", "Demucs GPU NVIDIA"),
         "model-subtitle-ocr": ("Nhận dạng phụ đề", "Subtitle recognition"),
+        "model-speaker-identification": ("Nhận diện người nói", "Speaker identification"),
     }
     return labels.get(unit, ("Tài nguyên hỗ trợ", "Supporting resources"))[0 if vi else 1]
 
