@@ -15,8 +15,27 @@ from haizflow.utils.ffmpeg import _binary
 from haizflow.utils.atomic_file import atomic_json
 
 from haizflow.core.bundled_models import MODEL_FILE, MODEL_SIZE, MODEL_SHA256, MODEL_REVISION, MODEL_URL as MODEL_URL
-IDENTITY_VERSION = "wespeaker-stable-target-voices-v9-float-subturn-childstyle"
+IDENTITY_VERSION = "wespeaker-stable-target-voices-v10-adaptive-anchors-pitchfallback"
 FALLBACK_VOICE = "omnivoice:female_gentle"
+_ANCHOR_MIN_DURATION = 1.0   # seconds; shorter turns still contribute as non-anchors
+_MAX_ANCHORS = 384           # cap for video-wide anchor sampling
+
+
+def _pitch_fallback_voice(pitch_hz, male_probability=None):
+    """Choose a natural fallback when speaker identity is not confident.
+
+    Use learned male-probability when available; fall back to raw pitch.
+    This replaces the previous unconditional female-gentle default that
+    assigned a female voice to every uncertain male speaker.
+    """
+    if male_probability is not None:
+        if male_probability >= 0.65:
+            return "omnivoice:male_soft"
+        if male_probability <= 0.35:
+            return FALLBACK_VOICE
+    if pitch_hz is not None and pitch_hz < 165:
+        return "omnivoice:male_soft"
+    return FALLBACK_VOICE
 
 
 def _pitch_samples(audio, *, preserve_gaps=False):
@@ -37,21 +56,25 @@ def _pitch_samples(audio, *, preserve_gaps=False):
     voiced = np.sqrt(np.mean(frames ** 2, axis=1)) >= 20
     if not voiced.any():
         return []
-    if not preserve_gaps:
-        frames = frames[voiced]
+    frames_to_process = frames[voiced]
     max_lag = 229
-    correlation = np.fft.irfft(np.abs(np.fft.rfft(frames, n=2048)) ** 2, n=2048)[:, :max_lag + 1]
-    energy = np.concatenate((np.zeros((len(frames), 1)), np.cumsum(frames ** 2, axis=1)), axis=1)
+    correlation = np.fft.irfft(np.abs(np.fft.rfft(frames_to_process, n=2048)) ** 2, n=2048)[:, :max_lag + 1]
+    energy = np.concatenate((np.zeros((len(frames_to_process), 1)), np.cumsum(frames_to_process ** 2, axis=1)), axis=1)
     lags = np.arange(1, max_lag + 1)
     difference = np.maximum(0, energy[:, 1024 - lags] + energy[:, -1, None]
                             - energy[:, lags] - 2 * correlation[:, 1:])
     difference /= 1024 - lags
     normalized = difference * lags / np.maximum(np.cumsum(difference, axis=1), 1e-12)
     estimates = []
-    for frame_index, curve in enumerate(normalized):
-        if preserve_gaps and not voiced[frame_index]:
+    v_idx = 0
+    for is_v in voiced:
+        if preserve_gaps and not is_v:
             estimates.append(float("nan"))
             continue
+        if not is_v and not preserve_gaps:
+            continue
+        curve = normalized[v_idx]
+        v_idx += 1
         count = len(estimates)
         # Only accept clearly periodic frames; noise/silence is not evidence
         # of either a male or female voice.
@@ -155,17 +178,9 @@ def model_root() -> Path:
     return bundled if (bundled / MODEL_FILE).is_file() else Path(MODELS_DIR) / "speaker-identification"
 
 
-def _features(audio):
-    """Kaldi-compatible 80-bin, 25/10 ms, Hamming filterbank + CMN."""
+def _build_mel_weights():
     import numpy as np
 
-    audio = np.asarray(audio, dtype=np.float32)
-    frames = np.lib.stride_tricks.sliding_window_view(audio, 400)[::160].copy()
-    frames -= frames.mean(axis=1, keepdims=True)
-    frames[:, 1:] -= 0.97 * frames[:, :-1].copy()
-    frames[:, 0] *= 0.03
-    frames *= np.hamming(400).astype(np.float32)
-    power = np.abs(np.fft.rfft(frames, n=512)) ** 2
     mel = 1127 * np.log1p(np.arange(257) * (16000 / 512) / 700)
     edges = np.linspace(1127 * np.log1p(20 / 700), 1127 * np.log1p(8000 / 700), 82)
     weights = np.maximum(
@@ -175,7 +190,24 @@ def _features(audio):
             (edges[2:, None] - mel[None, :]) / (edges[2:] - edges[1:-1])[:, None],
         ),
     )
-    features = np.log(np.maximum(power @ weights.T, np.finfo(np.float32).eps)).astype(np.float32)
+    return np.hamming(400).astype(np.float32), weights.T.astype(np.float32)
+
+
+_HAMMING_400, _MEL_WEIGHTS_T = _build_mel_weights()
+
+
+def _features(audio):
+    """Kaldi-compatible 80-bin, 25/10 ms, Hamming filterbank + CMN."""
+    import numpy as np
+
+    audio = np.asarray(audio, dtype=np.float32)
+    frames = np.lib.stride_tricks.sliding_window_view(audio, 400)[::160].copy()
+    frames -= frames.mean(axis=1, keepdims=True)
+    frames[:, 1:] -= 0.97 * frames[:, :-1].copy()
+    frames[:, 0] *= 0.03
+    frames *= _HAMMING_400
+    power = np.abs(np.fft.rfft(frames, n=512)) ** 2
+    features = np.log(np.maximum(power @ _MEL_WEIGHTS_T, np.finfo(np.float32).eps)).astype(np.float32)
     return features - features.mean(axis=0, keepdims=True)
 
 
@@ -259,7 +291,7 @@ def _reconcile_expressive_groups(vectors, labels):
     for left in range(len(identities)):
         for right in range(left + 1, len(identities)):
             score = float(similarity[left, right])
-            if score < .70 or min(len(members[left]), len(members[right])) < 2:
+            if score < .63 or min(len(members[left]), len(members[right])) < 2:
                 continue
             others = [i for i in range(len(identities)) if i not in (left, right)]
             competing = max((max(similarity[left, i], similarity[right, i]) for i in others), default=-1)
@@ -267,7 +299,7 @@ def _reconcile_expressive_groups(vectors, labels):
                 continue
             examples = [vectors[group[np.linspace(0, len(group) - 1, min(24, len(group)), dtype=int)]]
                         for group in (members[left], members[right])]
-            matches = examples[0] @ examples[1].T >= .52
+            matches = examples[0] @ examples[1].T >= .48
             if np.count_nonzero(matches.any(axis=0)) < 2 or np.count_nonzero(matches.any(axis=1)) < 2:
                 continue
             allowed[left, right] = allowed[right, left] = True
@@ -292,11 +324,11 @@ def _label_turns(vectors, valid_indices, segments):
     # Prefer full turns so phonetic variation in tiny fragments does not
     # create extra people; do not collapse a dialogue with only short turns.
     anchors = [i for i, index in enumerate(valid_indices)
-               if float(segments[index]["end"]) - float(segments[index]["start"]) >= 1.8]
+               if float(segments[index]["end"]) - float(segments[index]["start"]) >= _ANCHOR_MIN_DURATION]
     if not anchors:
         anchors = list(range(len(valid_indices)))
-    if len(anchors) > 192:
-        anchors = [anchors[i] for i in np.linspace(0, len(anchors) - 1, 192, dtype=int)]
+    if len(anchors) > _MAX_ANCHORS:
+        anchors = [anchors[i] for i in np.linspace(0, len(anchors) - 1, _MAX_ANCHORS, dtype=int)]
     anchor_labels = _cluster(vectors[anchors])
     labels, scores = _assign_identities(vectors, anchors, anchor_labels)
     reconciled = _reconcile_expressive_groups(vectors, labels)
@@ -309,9 +341,9 @@ def _label_turns(vectors, valid_indices, segments):
     unsupported = [i for i, index in enumerate(valid_indices) if i not in anchors
                    and float(segments[index]["end"]) - float(segments[index]["start"]) >= .50
                    and float(scores[i].max()) < (.40 if float(segments[index]["end"]) - float(segments[index]["start"]) >= .75 else .30)]
-    if unsupported and len(anchors) < 192:
+    if unsupported and len(anchors) < _MAX_ANCHORS:
         unsupported.sort(key=lambda i: (float(scores[i].max()), i))
-        additions = unsupported[:192 - len(anchors)]
+        additions = unsupported[:_MAX_ANCHORS - len(anchors)]
         new_labels = _cluster(vectors[additions])
         original_labels, supported = labels[:], scores.max(axis=1) >= .40
         next_label = max(anchor_labels) + 1
@@ -459,6 +491,9 @@ def _embedding_input(audio):
     return np.resize(features, (150, 80)) if len(audio) < 8000 else features
 
 
+_STYLE_BANK_CACHE: dict = {}
+
+
 def _style_reference_bank(session, segments, video_id):
     """Coarse target-timbre evidence, not reference-person identification.
 
@@ -470,6 +505,10 @@ def _style_reference_bank(session, segments, video_id):
     from collections import Counter
     from haizflow.pipeline.omnivoice_tts import _preset_reference
     language = Counter(str(item.get('language') or item.get('source_language') or 'en') for item in segments).most_common(1)[0][0]
+    device = getattr(session, "device", "cpu")
+    cache_key = (language, device)
+    if cache_key in _STYLE_BANK_CACHE:
+        return {k: v.copy() for k, v in _STYLE_BANK_CACHE[cache_key].items()}
     groups = {'adult': ['male','deep','male_high','male_soft','female','female_low','bright','female_gentle'],
               'child': ['child','cartoon','child_soft','child_bright']}
     bank = {}
@@ -493,6 +532,8 @@ def _style_reference_bank(session, segments, video_id):
             vectors.append(vector / max(np.linalg.norm(vector),1e-8))
         if len(vectors) >= 2:
             bank[kind] = np.array(vectors)
+    if bank:
+        _STYLE_BANK_CACHE[cache_key] = bank
     return bank
 
 
@@ -692,7 +733,7 @@ def identify(audio_path: str, segments: list[dict], video_id: str, progress=None
     for label, (kind, uncertain, pitch, probability) in resolved_profiles.items():
         pitch_profiles[label] = (uncertain, pitch, probability)
         if kind == "unknown":
-            voices[label] = FALLBACK_VOICE
+            voices[label] = _pitch_fallback_voice(pitch, probability)
             continue
         choices = ['omnivoice:child_soft','omnivoice:child_bright','omnivoice:child'] if kind == 'child' else female if kind == "female" else male
         voices[label] = choices[counts[kind] % len(choices)]
@@ -726,7 +767,8 @@ def identify(audio_path: str, segments: list[dict], video_id: str, progress=None
             {
                 **segment,
                 "speaker_id": f"speaker-{label + 1}" if family_supported else f"unresolved-{index + 1}",
-                "speaker_voice": voices[label] if family_supported else FALLBACK_VOICE,
+                "speaker_voice": voices[label] if family_supported else _pitch_fallback_voice(
+                    pitch_profiles[label][1], pitch_profiles[label][2]),
                 "speaker_voice_uncertain": pitch_profiles[label][0] or not family_supported,
                 "speaker_pitch_hz": pitch_profiles[label][1],
                 "speaker_male_probability": pitch_profiles[label][2],
@@ -736,7 +778,7 @@ def identify(audio_path: str, segments: list[dict], video_id: str, progress=None
                 "speaker_voice_fallback": not family_supported,
                 "speaker_confidence": confidence,
                 "speaker_uncertain": confidence < 0.55 or margin < 0.10
-                or float(segment["end"]) - float(segment["start"]) < 1.8,
+                or float(segment["end"]) - float(segment["start"]) < _ANCHOR_MIN_DURATION,
             }
         )
     folded = []

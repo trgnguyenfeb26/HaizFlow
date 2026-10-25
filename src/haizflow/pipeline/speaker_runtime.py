@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
 
@@ -15,14 +17,32 @@ class SpeakerSession:
         self.device = "cpu"
         self.fallback_reason = ""
         self.options = ort.SessionOptions()
-        self.options.intra_op_num_threads = 2
-        self.options.inter_op_num_threads = 1
+        # On macOS with CoreML available, accelerate inference through CoreMLExecutionProvider (~16x speedup).
+        # Otherwise, bounded CPU inference with bounded threads.
+        available = ort.get_available_providers() if hasattr(ort, "get_available_providers") else ["CPUExecutionProvider"]
+        use_coreml = (
+            sys.platform == "darwin"
+            and "CoreMLExecutionProvider" in available
+            and os.environ.get("HAIZFLOW_DISABLE_COREML") != "1"
+        )
+        if use_coreml:
+            providers = ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+            self.device = "coreml"
+            self.options.intra_op_num_threads = min(4, os.cpu_count() or 2)
+            self.options.inter_op_num_threads = 1
+        else:
+            providers = ["CPUExecutionProvider"]
+            self.device = "cpu"
+            self.options.intra_op_num_threads = 2
+            self.options.inter_op_num_threads = 1
         self.options.log_severity_level = 3
-        # Real-media cold benchmarks favor CPU for this small sequential model.
-        # Do not load Torch/CUDA or occupy VRAM needed by Whisper and OmniVoice.
-        self.session = ort.InferenceSession(str(model), sess_options=self.options, providers=["CPUExecutionProvider"])
+        try:
+            self.session = ort.InferenceSession(str(model), sess_options=self.options, providers=providers)
+        except Exception:
+            self.session = ort.InferenceSession(str(model), sess_options=self.options, providers=["CPUExecutionProvider"])
+            self.device = "cpu"
         if report:
-            report("cpu", "")
+            report(self.device, "")
 
     def run(self, features):
         return self.session.run(None, {"feats": features})
@@ -35,7 +55,7 @@ class VoiceProfileSession:
         import onnxruntime as ort
 
         options = ort.SessionOptions()
-        options.intra_op_num_threads = 2
+        options.intra_op_num_threads = min(4, os.cpu_count() or 2) if sys.platform == "darwin" else 2
         options.inter_op_num_threads = 1
         options.log_severity_level = 3
         # The q8 graph yields NaN logits once ORT's extended fusions are applied

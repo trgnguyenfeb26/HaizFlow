@@ -43,20 +43,24 @@ _CONTEXT_RULES = (
 # Tone applied on top of the faithful-translation rules. Humor may change the
 # wording, never the facts, so names/numbers/negation stay protected.
 _STYLE = (
-    " Style: translate like a brazen, sarcastic, cocky native speaker roasting a video with friends. "
-    "Be cheeky, irreverent and mouthy: heavy casual slang, meme and internet phrasing, exaggeration, "
-    "sarcasm, mock-dramatic reactions, playful insults aimed at the situation or speaker, and mild "
-    "swearing (for Vietnamese: giọng cực bựa, láo toét, xéo xắt, Gen Z, dùng từ lóng, 'mày/tao', "
-    "'ông/bà', 'vãi', 'trời ơi', 'ảo thật đấy', 'nhây' khi hợp ngữ cảnh). Add a punchy comedic twist "
-    "or sassy aside to lines where it fits, but keep every fact, name, number, negation and the "
-    "overall meaning intact, and keep each line short enough for its timing. Do not add explanations. "
+    " Style: translate like an unhinged, foul-mouthed, brutally hilarious Vietnamese shitposter and street-smart narrator. "
+    "Be unapologetically vulgar, crude, irreverent, and chaotic: heavy Vietnamese street slang, savage roasts, "
+    "sharp sarcasm, internet memes, and authentic Vietnamese profanity/swearing when emotion or situation calls for it "
+    "(đặc biệt cho tiếng Việt: dịch cực bựa, láo toét, tục tĩu, châm biếm sâu cay, cợt nhả, cà khịa không nể nang; "
+    "xưng hô 'mày/tao', 'thằng cha này', 'con mụ kia', 'thằng nhãi', 'bố mày' khi phù hợp ngữ cảnh; tự nhiên văng tục xả láng kiểu "
+    "'đéo', 'đách', 'vãi lồn', 'vãi cặc', 'vãi chưởng', 'đệt mợ', 'đù má', 'cay dái', 'chết tiệt', 'ảo ma', 'toang hoác', "
+    "'phèn ỉa', 'tấu hài'). Nếu câu gốc có ý chửi, cáu gắt hoặc bực tức, hãy bung xõa chửi thật gắt, thật thô bỉ và bựa đời, "
+    "tuyệt đối không dịch giảm nói tránh hay dùng từ ngữ thanh lịch nhạt nhẽo. "
+    "Add a punchy comedic twist, savage roast, or dirty remark to lines where it fits, but keep every core fact, "
+    "name, number, negation and the overall plot intact, and keep each line short enough for its timing. Do not add meta explanations. "
     "The text will be read aloud by a text-to-speech voice, so write everything exactly as it should be "
-    "spoken: never abbreviate or use shorthand (no 'ko', 'k', 'dc', 'vs', 'ok', 'cx', 'j', 'ntn', 'bt', "
-    "'ae', 'sp', 'kg', 'km', 'tr', 'm2', '%', '&', '@', '#', emojis, or acronym-style slang); spell out "
-    "numbers with units, symbols and abbreviations as full words in the target language "
-    "(e.g. 'không', 'được', 'bao nhiêu phần trăm', 'ki lô gam'). Keep proper names in their normal form. "
-    "Stay out of slurs, hate speech, sexual content and attacks on real protected groups."
+    "spoken: never abbreviate or use chat shorthand (no 'ko', 'k', 'dc', 'vs', 'ok', 'cx', 'j', 'ntn', 'bt', "
+    "'ae', 'sp', 'kg', 'km', 'tr', 'm2', '%', '&', '@', '#', emojis, or acronyms like 'đm', 'vcl', 'clgt'); "
+    "if swearing or cursing, spell out the words phonetically in full so TTS pronounces them aloud "
+    "(e.g. 'đéo', 'đù má', 'đệt mợ', 'vãi lồn', 'không', 'được', 'ki lô gam'). "
+    "Keep proper names in their normal form. Avoid real-world hate speech or attacks on protected groups."
 )
+
 
 
 def _key_index() -> dict:
@@ -319,6 +323,12 @@ def _request_chunk(
         "contents": [{"role": "user", "parts": [{
             "text": json.dumps({"subtitles": entries}, ensure_ascii=False, separators=(",", ":")),
         }]}],
+        "safetySettings": [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+        ],
         "generationConfig": {
             "temperature": 0.9,
             "candidateCount": 1,
