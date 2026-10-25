@@ -38,6 +38,9 @@ class VoiceProfileSession:
         options.intra_op_num_threads = 2
         options.inter_op_num_threads = 1
         options.log_severity_level = 3
+        # The q8 graph yields NaN logits once ORT's extended fusions are applied
+        # (seen with onnxruntime 1.31 on Apple silicon); basic folding is exact.
+        options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_BASIC
         self.session = ort.InferenceSession(str(model), sess_options=options, providers=["CPUExecutionProvider"])
 
     def male_probability(self, pcm):

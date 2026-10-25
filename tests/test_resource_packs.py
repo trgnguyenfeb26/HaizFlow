@@ -294,6 +294,15 @@ class ResourcePackManagerTests(unittest.TestCase):
         self.assertNotIn("engine-cuda128-py313", packs)
         self.assertNotIn("engine-vision-onnx", packs)
 
+    def test_speaker_pack_downloads_embedding_and_voice_profile_models(self):
+        from haizflow.core.voice_profile_model import MODEL_FILE as PROFILE_FILE
+
+        pack = ResourcePackManager().definitions["model-speaker-identification"]
+        paths = {asset.relative_path for asset in pack.assets}
+        self.assertIn(f"speaker-identification/{PROFILE_FILE}", paths)
+        self.assertEqual(len(paths), 2)
+        self.assertEqual(pack.download_size, sum(asset.size for asset in pack.assets))
+
     def test_bundled_speaker_worker_has_a_frozen_entrypoint(self):
         manager = ResourcePackManager()
         with patch.object(sys, "frozen", True, create=True):
