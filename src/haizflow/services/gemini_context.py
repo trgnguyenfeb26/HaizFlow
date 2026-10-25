@@ -3,10 +3,10 @@
 VERSION = "gemini-consistent-dialogue-v3-style-default-sampling"
 MAX_GUIDANCE = 4000
 STYLE_PROMPTS = {
-    "balanced": "Dịch theo phong cách giang hồ mạng cực kỳ bựa, tục tĩu, chửi thề xả láng, cay cú và đanh đá chuẩn vỉa hè Việt Nam.",
-    "literal": "Bám sát câu gốc nhưng dịch thô tục, bựa đời, châm biếm và chửi bậy chuẩn âm.",
-    "natural": "Khẩu ngữ đường phố vỉa hè cực tự nhiên, xưng hô mày - tao - bố mày, văng tục thoải mái và hài hước.",
-    "adaptive": "Tung hết mọi chiêu trò chửi bới, châm biếm cay độc, tục tĩu cực độ, bựa vô đối, cà khịa không khoan nhượng.",
+    "balanced": "Dịch theo phong cách giang hồ mạng cực kỳ bựa, lầy lội, cay cú và đanh đá chuẩn vỉa hè Việt Nam (không dùng từ thô tục bộ phận sinh dục, thay bằng bíp hoặc từ lóng bựa).",
+    "literal": "Bám sát câu gốc nhưng dịch bựa đời, châm biếm và cay độc hài hước (dùng bíp thay từ nhạy cảm).",
+    "natural": "Khẩu ngữ đường phố vỉa hè cực tự nhiên, xưng hô mày - tao - bố mày, văng tục thoải mái và hài hước (không dùng từ tục bộ phận sinh dục).",
+    "adaptive": "Tung hết mọi chiêu trò châm biếm cay độc, bựa vô đối, cà khịa không khoan nhượng (dùng [bíp] hoặc từ lóng bựa thay thế).",
 }
 
 
