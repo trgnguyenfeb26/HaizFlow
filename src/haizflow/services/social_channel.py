@@ -14,7 +14,7 @@ from datetime import datetime
 from html.parser import HTMLParser
 from urllib.parse import urlencode, urlparse
 
-from haizflow.services.video_download import DownloadCancelled, _load_yt_dlp, _youtube_dl_options
+from haizflow.services.video_download import DownloadCancelled, _impersonate_target, _load_yt_dlp, _youtube_dl_options
 
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_PAGES = 10
@@ -406,7 +406,8 @@ def inspect_profile(url: str, platform: str, auth: dict, limit: int, event: thre
     else:
         raise ValueError("Unsupported profile reader.")
     limit = min(1000, max(1, limit))
-    with _load_yt_dlp().YoutubeDL(_youtube_dl_options(auth, impersonate=True)) as downloader:
+    with _load_yt_dlp().YoutubeDL(_youtube_dl_options(auth, impersonate=True,
+                                                      impersonate_target=_impersonate_target(platform, 0))) as downloader:
         if platform == "Instagram":
             return _instagram(downloader, parts[0], limit, event)
         if platform == "X":

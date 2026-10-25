@@ -125,7 +125,10 @@ def transcribe(*args, **kwargs):
             if callback:
                 callback("saved", f"Prepared {len(checkpoint.segments)} timestamp-locked sentences")
             return checkpoint.segments, checkpoint.language
-    if context["device"] == "cpu":
+    from haizflow.core.apple_gpu import apple_gpu_asr_available
+
+    # The Apple GPU shares system memory, so its Turbo decode uses the same check.
+    if context["device"] == "cpu" or apple_gpu_asr_available():
         from haizflow.core.memory import require_cpu_memory
         from haizflow.services.external_engine import shared_external_engine_pool
 

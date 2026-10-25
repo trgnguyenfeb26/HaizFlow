@@ -241,7 +241,20 @@ def _impersonate_on_attempt(platform: str, attempt: int) -> bool:
     return platform == "Xiaohongshu" or attempt > 0
 
 
-def _youtube_dl_options(auth: dict | None = None, *, impersonate: bool = False) -> dict:
+# Xiaohongshu answers curl_cffi's Chrome profile with its anti-bot page
+# ("Unable to extract initial state") nearly every time, while the Safari
+# and Edge profiles receive the note. Rotate them across retries.
+_XIAOHONGSHU_TARGETS = ("safari", "edge", "chrome")
+
+
+def _impersonate_target(platform: str, attempt: int) -> str:
+    if platform == "Xiaohongshu":
+        return _XIAOHONGSHU_TARGETS[attempt % len(_XIAOHONGSHU_TARGETS)]
+    return "chrome"
+
+
+def _youtube_dl_options(auth: dict | None = None, *, impersonate: bool = False,
+                        impersonate_target: str = "chrome") -> dict:
     ffmpeg_location = BIN_DIR if os.path.isdir(BIN_DIR) else None
     options = {
         "quiet": True,
@@ -268,7 +281,7 @@ def _youtube_dl_options(auth: dict | None = None, *, impersonate: bool = False) 
     if impersonate and importlib.util.find_spec("curl_cffi") is not None:
         from yt_dlp.networking.impersonate import ImpersonateTarget
         # The Python API expects a target object, unlike yt-dlp's CLI string.
-        options["impersonate"] = ImpersonateTarget.from_str("chrome")
+        options["impersonate"] = ImpersonateTarget.from_str(impersonate_target)
     auth = auth or {}
     cookie_file = str(auth.get("cookie_file") or "").strip()
     cookie_browser = str(auth.get("cookie_browser") or "").strip().lower()
@@ -485,6 +498,8 @@ def _is_retryable_download_error(exc: Exception, platform: str) -> bool:
         return True
     if platform == "TikTok" and _is_retryable_tiktok_error(exc):
         return True
+    if platform == "Xiaohongshu" and "unable to extract initial state" in message:
+        return True  # An anti-bot page; the next attempt uses another browser profile.
     return isinstance(exc, (ConnectionError, TimeoutError, OSError)) and not isinstance(
         exc, PermissionError
     )
@@ -534,8 +549,10 @@ def _wait_for_retry(cancel_event: threading.Event | None, seconds: float) -> Non
     time.sleep(seconds)
 
 
-def _inspect_video_info(yt_dlp, url: str, *, impersonate: bool = False, auth=None, cancel_event=None) -> dict:
-    with yt_dlp.YoutubeDL(_youtube_dl_options(_ytdlp_auth_for_url(auth, url), impersonate=impersonate)) as downloader, \
+def _inspect_video_info(yt_dlp, url: str, *, impersonate: bool = False, auth=None, cancel_event=None,
+                        impersonate_target: str = "chrome") -> dict:
+    with yt_dlp.YoutubeDL(_youtube_dl_options(_ytdlp_auth_for_url(auth, url), impersonate=impersonate,
+                                              impersonate_target=impersonate_target)) as downloader, \
             DownloadControl(downloader, cancel_event, DownloadCancelled):
         return _extract_video_info(downloader, url, download=False, auth=auth, cancel_event=cancel_event)
 
@@ -551,7 +568,8 @@ def inspect_video_url(url: str, cancel_event: threading.Event | None = None, aut
     for attempt in range(attempts):
         try:
             info = _inspect_video_info(yt_dlp, normalized_url, auth=auth, cancel_event=cancel_event,
-                                       impersonate=_impersonate_on_attempt(platform, attempt))
+                                       impersonate=_impersonate_on_attempt(platform, attempt),
+                                       impersonate_target=_impersonate_target(platform, attempt))
             break
         except Exception as exc:
             if cancel_event and cancel_event.is_set():
@@ -624,7 +642,8 @@ def download_audio(
         for stale in target.parent.glob(f"{target.stem}.source.*"):
             stale.unlink(missing_ok=True)
         options = _youtube_dl_options(_ytdlp_auth_for_url(auth, normalized_url),
-                                     impersonate=_impersonate_on_attempt(platform, attempt) and platform != "Bilibili")
+                                     impersonate=_impersonate_on_attempt(platform, attempt) and platform != "Bilibili",
+                                     impersonate_target=_impersonate_target(platform, attempt))
         options.update(
             {
                 "outtmpl": str(target.with_name(f"{target.stem}.source.%(ext)s")),
@@ -801,7 +820,8 @@ def download_video(
             raise DownloadCancelled("Video download cancelled.")
         options = _youtube_dl_options(_ytdlp_auth_for_url(auth, metadata.url),
                                      impersonate=_impersonate_on_attempt(metadata.platform, attempt)
-                                     and metadata.platform != "Bilibili")
+                                     and metadata.platform != "Bilibili",
+                                     impersonate_target=_impersonate_target(metadata.platform, attempt))
         options.update(
             {
                 "outtmpl": os.path.join(workspace, "%(title).120B [%(id)s].%(ext)s"),

@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 from pathlib import Path
 
@@ -185,6 +186,27 @@ _RUNTIME_ENVIRONMENT = {
     "TMP": TMP_DIR,
     "TEMP": TMP_DIR,
 }
+if sys.platform == "darwin":
+    # macOS resolves the login Keychain and browser profiles (cookies for
+    # yt-dlp) through the real HOME; the dedicated cache variables above
+    # still keep library data inside the runtime folder.
+    del _RUNTIME_ENVIRONMENT["HOME"]
+    # torchcodec (pyannote audio decoding) loads FFmpeg 4-7 shared libraries
+    # while Homebrew's default ffmpeg is newer. AI workers are child processes,
+    # so dyld reads this when they start.
+    _FFMPEG7_LIB = "/opt/homebrew/opt/ffmpeg@7/lib"
+    # Setting the variable replaces dyld's default fallback list; keep it.
+    _fallback = os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "") or "/usr/local/lib:/usr/lib"
+    if os.path.isdir(_FFMPEG7_LIB) and _FFMPEG7_LIB not in _fallback.split(os.pathsep):
+        os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = os.pathsep.join(filter(None, (_fallback, _FFMPEG7_LIB)))
+    # Homebrew's default ffmpeg is built without libass (captions) and
+    # rubberband. ffmpeg-full has both, like the bundled Windows build;
+    # ffmpeg@7 above only supplies torchcodec's libraries (its tpad filter
+    # does not extend trimmed video).
+    _FFMPEG_FULL_BIN = "/opt/homebrew/opt/ffmpeg-full/bin"
+    if os.path.isfile(os.path.join(_FFMPEG_FULL_BIN, "ffmpeg")):
+        _path = [item for item in os.environ.get("PATH", "").split(os.pathsep) if item != _FFMPEG_FULL_BIN]
+        os.environ["PATH"] = os.pathsep.join([_FFMPEG_FULL_BIN, *_path])
 os.environ.update(_RUNTIME_ENVIRONMENT)
 
 # Project-owned data is created inside the selected project. This global path

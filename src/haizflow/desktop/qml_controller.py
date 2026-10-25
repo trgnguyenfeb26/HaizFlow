@@ -14,6 +14,7 @@ from PySide6.QtGui import QGuiApplication
 from PySide6.QtQml import QmlNamedElement, QmlSingleton
 
 from haizflow.config import RUNTIME_DATA_DIR
+from haizflow.core.apple_gpu import apple_gpu_asr_available
 from haizflow.core.events import subscribe_log, unsubscribe_log
 from haizflow.core.hardware import (
     basic_hardware_capabilities,
@@ -1427,6 +1428,18 @@ class HaizFlowController(QObject):
         requested = str(value or "small").strip().lower()
         if requested not in {"small", "small-cpu", "small-gpu", "large-v3-turbo"}:
             requested = "small"
+        apple_turbo = requested == "large-v3-turbo" and apple_gpu_asr_available()
+        if apple_turbo:
+            if not getattr(self, "_whisper_turbo_model_ready", False):
+                self._show_app_alert(
+                    "Thiếu Whisper Turbo",
+                    "Hãy cài Whisper Turbo trong Gói tài nguyên trước khi nhận dạng.",
+                    "warning",
+                )
+            if self._speech_recognition_model != requested:
+                self._speech_recognition_model = requested
+                self.speechRecognitionModelChanged.emit()
+            return
         if requested in {"small-gpu", "large-v3-turbo"} and getattr(self, "_settings_processing_device", "cpu") != "gpu":
             self._show_app_alert("Đang dùng chế độ CPU", "Chọn Whisper CPU hoặc chuyển sang GPU trong Cài đặt → Chung.", "warning")
             return
@@ -1465,6 +1478,13 @@ class HaizFlowController(QObject):
         # authoritative result instead of permanently disabling Turbo.
         gpu_available = HaizFlowController._project_gpu_available(self)
         turbo_available = HaizFlowController._heavy_gpu_models_available(self)
+        if apple_gpu_asr_available():
+            turbo_label = "Whisper Turbo · GPU Apple" if getattr(self, "_settings_language", "en") == "vi" \
+                else "Whisper Turbo · Apple GPU"
+            return [
+                {"value": "small-cpu", "label": "Whisper Small · CPU", "available": True},
+                {"value": "large-v3-turbo", "label": turbo_label, "available": True},
+            ]
         if getattr(self, "_settings_language", "en") == "vi":
             return [
                 {"value": "small-cpu", "label": "Whisper Small · CPU", "available": True},
@@ -1487,6 +1507,8 @@ class HaizFlowController(QObject):
 
     @Property(int, notify=speechRecognitionModelChanged)
     def speechRecognitionModelIndex(self):
+        if apple_gpu_asr_available():
+            return 1 if self._speech_recognition_model == "large-v3-turbo" else 0
         if self._speech_recognition_model == "large-v3-turbo":
             return 2
         return 1 if self._speech_recognition_model == "small-gpu" or (

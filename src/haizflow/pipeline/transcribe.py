@@ -99,6 +99,26 @@ def _load_whisper_model(device: str, compute_type: str, threads: int, model_name
     )
 
 
+def _uses_apple_gpu(model_name: str) -> bool:
+    """Whisper Turbo decodes on the Apple GPU (MLX) when CUDA is unavailable."""
+    from haizflow.core.apple_gpu import apple_gpu_asr_available
+
+    return model_name == "large-v3-turbo" and apple_gpu_asr_available()
+
+
+def _load_mlx_whisper_model():
+    from haizflow.core.model_integrity import verify_whisper_mlx_turbo_model
+    from haizflow.pipeline.mlx_whisper_asr import MlxWhisperPipeline
+
+    try:
+        model_dir = verify_whisper_mlx_turbo_model(Path(MODELS_DIR) / "whisper" / "mlx-large-v3-turbo")
+    except ModelIntegrityError as exc:
+        raise RuntimeError(
+            "Whisper Turbo (Apple GPU) is missing or corrupted. Install Whisper Turbo in Resource Packs."
+        ) from exc
+    return MlxWhisperPipeline(model_dir, _verify_whisperx_vad_asset())
+
+
 def _constrain_four_gb_vad(asr_model, profile, device: str) -> None:
     """Leave CUDA for Whisper Small; Pyannote VAD can run on the CPU."""
     total_vram_bytes = getattr(profile, "total_vram_bytes", None)
@@ -125,15 +145,21 @@ def warm_whisperx_model(model_name: str = "small", *, device_preference: str | N
 
         profile = cpu_runtime_profile(runtime_profile(), force_cpu=device_preference == "cpu")
         device = "cuda" if profile.cuda_available and device_preference != "cpu" else "cpu"
+        apple_gpu = _uses_apple_gpu(model_name) and device != "cuda"
+        if apple_gpu:
+            device = "mlx"
         if _WARM_ASR_MODEL is not None and _WARM_MODEL_NAME == model_name and _WARM_DEVICE == device:
             return True
         if _WARM_ASR_MODEL is not None:
             del _WARM_ASR_MODEL
             _WARM_ASR_MODEL = None
-        compute_type = whisper_compute_type(device)
         try:
-            model = _load_whisper_model(device, compute_type, profile.cpu_threads, model_name)
-            _constrain_four_gb_vad(model, profile, device)
+            if apple_gpu:
+                model = _load_mlx_whisper_model()
+            else:
+                compute_type = whisper_compute_type(device)
+                model = _load_whisper_model(device, compute_type, profile.cpu_threads, model_name)
+                _constrain_four_gb_vad(model, profile, device)
         except Exception:
             _WARM_ASR_MODEL = None
             _WARM_DEVICE = None
@@ -1279,17 +1305,20 @@ def transcribe(
 
     profile = cpu_runtime_profile(runtime_profile(), force_cpu=device_preference == "cpu")
     device = "cuda" if profile.cuda_available and device_preference != "cpu" else "cpu"
+    # Apple silicon: Whisper decodes on Metal; VAD and alignment stay on the CPU.
+    apple_gpu = _uses_apple_gpu(model_name) and device != "cuda"
+    asr_device = "mlx" if apple_gpu else device
     if model_name == "large-v3-turbo" and device == "cuda" and 0 < profile.total_vram_bytes < 5 * 1024**3:
         raise RuntimeError("Card 4 GB dùng Whisper Small trên GPU; Whisper Turbo cần thêm VRAM.")
-    if model_name == "large-v3-turbo" and device != "cuda":
+    if model_name == "large-v3-turbo" and device != "cuda" and not apple_gpu:
         raise RuntimeError(
-            "Whisper large-v3-turbo requires an available NVIDIA GPU. "
+            "Whisper large-v3-turbo requires an available NVIDIA GPU or Apple silicon GPU. "
             "Choose WhisperX small for CPU or low-VRAM processing."
         )
-    compute_type = whisper_compute_type(device)
+    compute_type = "float16 (MLX, Apple GPU)" if apple_gpu else whisper_compute_type(device)
     log_to_video(
         video_id,
-        f"WhisperX device: {device}, compute type: {compute_type}, "
+        f"WhisperX device: {asr_device}, compute type: {compute_type}, "
         f"batch size: {profile.whisper_batch_size}, threads: {profile.cpu_threads}.",
     )
 
@@ -1301,7 +1330,7 @@ def transcribe(
         if progress_callback:
             progress_callback("loading_model", "Loading WhisperX speech model")
         with _MODEL_LOCK:
-            if _WARM_ASR_MODEL is not None and _WARM_DEVICE == device and _WARM_MODEL_NAME == model_name:
+            if _WARM_ASR_MODEL is not None and _WARM_DEVICE == asr_device and _WARM_MODEL_NAME == model_name:
                 asr_model = _WARM_ASR_MODEL
                 using_warm_model = True
                 log_to_video(video_id, "Reusing warmed WhisperX speech model.")
@@ -1322,7 +1351,8 @@ def transcribe(
                         video_id,
                         "Released the warmed WhisperX model before switching ASR models.",
                     )
-                asr_model = _load_whisper_model(device, compute_type, profile.cpu_threads, model_name)
+                asr_model = (_load_mlx_whisper_model() if apple_gpu else
+                             _load_whisper_model(device, compute_type, profile.cpu_threads, model_name))
         _constrain_four_gb_vad(asr_model, profile, device)
         if getattr(asr_model, "_haizflow_vad_cpu", False):
             log_to_video(video_id, "Four GB GPU profile: Whisper runs on CUDA; VAD runs on CPU.")

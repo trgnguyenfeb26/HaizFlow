@@ -1131,12 +1131,15 @@ class ProjectCommandsController:
                 )
             return False
         turbo_model_ready = bool(getattr(host, "_whisper_turbo_model_ready", False))
-        if asr_model == "large-v3-turbo" and (not turbo_gpu_available or not turbo_model_ready):
+        from haizflow.core.apple_gpu import apple_gpu_asr_available
+
+        turbo_device_available = turbo_gpu_available or apple_gpu_asr_available()
+        if asr_model == "large-v3-turbo" and (not turbo_device_available or not turbo_model_ready):
             show_alert = getattr(host, "_show_app_alert", None)
             message = (
                 "Chưa cài Whisper Turbo hoặc gói chưa xác minh xong. "
                 "Hãy cài trong Gói tài nguyên hoặc chọn Whisper Small."
-                if turbo_gpu_available and not turbo_model_ready
+                if turbo_device_available and not turbo_model_ready
                 else "Whisper Turbo cần GPU NVIDIA tương thích. Hãy chọn Whisper Small."
             )
             if callable(show_alert):

@@ -9,6 +9,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
+import sys
 import time
 from dataclasses import dataclass
 
@@ -93,12 +94,42 @@ def _windows_memory_snapshot(kernel32) -> MemorySnapshot:
     return MemorySnapshot(installed, usable, available, limit, used, process_commit)
 
 
+def _macos_memory_snapshot() -> MemorySnapshot:
+    """macOS has no SC_AVPHYS_PAGES; read Mach VM counters instead.
+
+    Available follows Activity Monitor: free, inactive, speculative and
+    purgeable pages can be reclaimed without swapping out active memory.
+    """
+    libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib", use_errno=True)
+    installed = ctypes.c_uint64(0)
+    size = ctypes.c_size_t(ctypes.sizeof(installed))
+    if libc.sysctlbyname(b"hw.memsize", ctypes.byref(installed), ctypes.byref(size), None, 0) != 0:
+        raise OSError(ctypes.get_errno(), "sysctl hw.memsize failed")
+    # HOST_VM_INFO64 fills vm_statistics64 (38 natural_t words): free,
+    # active, inactive, wire, nine 64-bit counters, purgeable, speculative.
+    words = (ctypes.c_uint32 * 38)()
+    count = ctypes.c_uint32(38)
+    libc.mach_host_self.restype = ctypes.c_uint32
+    if libc.host_statistics64(libc.mach_host_self(), 4, words, ctypes.byref(count)) != 0:
+        raise OSError("host_statistics64 failed")
+    page_size = int(os.sysconf("SC_PAGE_SIZE"))
+    free, inactive, purgeable, speculative = words[0], words[2], words[22], words[23]
+    available = (free + inactive + purgeable + speculative) * page_size
+    return MemorySnapshot(installed_bytes=installed.value, usable_bytes=installed.value,
+                          available_bytes=min(available, installed.value))
+
+
 def memory_snapshot() -> MemorySnapshot:
     """Read live counters without Torch, PowerShell, psutil or cached free RAM."""
     if os.name == "nt":
         try:
             return _windows_memory_snapshot(ctypes.windll.kernel32)
         except (AttributeError, OSError):
+            return MemorySnapshot()
+    if sys.platform == "darwin":
+        try:
+            return _macos_memory_snapshot()
+        except (AttributeError, OSError, ValueError):
             return MemorySnapshot()
     try:
         page_size = os.sysconf("SC_PAGE_SIZE")

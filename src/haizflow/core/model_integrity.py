@@ -19,6 +19,9 @@ WHISPER_REPO = "Systran/faster-whisper-small"
 WHISPER_REVISION = "536b0662742c02347bc0e980a01041f333bce120"
 WHISPER_TURBO_REPO = "mobiuslabsgmbh/faster-whisper-large-v3-turbo"
 WHISPER_TURBO_REVISION = "0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf"
+# Apple silicon decodes the same large-v3-turbo checkpoint through MLX.
+WHISPER_MLX_TURBO_REPO = "mlx-community/whisper-large-v3-turbo"
+WHISPER_MLX_TURBO_REVISION = "a4aaeec0636e6fef84abdcbe3544cb2bf7e9f6fb"
 WHISPERX_VAD_REVISION = "3ccc17b8de34f305300f8a3fd3c9f76ba820c0d0"
 WHISPERX_VAD_FILE = "pytorch_model.bin"
 WHISPERX_VAD_URL = (
@@ -191,6 +194,10 @@ WHISPER_TURBO_FILES = {
     "preprocessor_config.json": (340, "7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711"),
     "tokenizer.json": (2_710_337, "297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd"),
     "vocabulary.json": (1_068_114, "c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1"),
+}
+WHISPER_MLX_TURBO_FILES = {
+    "config.json": (268, "b34fc29e4e11e0a25e812775dd67f4dd16fc2c8eb43d28ae25ff7d660ecb6379"),
+    "weights.safetensors": (1_613_977_612, "951ed3fc1203e6a62467abb2144a96ce7eafca8fa77e3704fdb8635ff3e7f8a6"),
 }
 
 HYMT2_GPU_FILES = {
@@ -377,6 +384,24 @@ def verify_whisper_turbo_model(model_directory: Path) -> Path:
         revision=WHISPER_TURBO_REVISION,
         expected=WHISPER_TURBO_FILES,
     )
+
+
+def verify_whisper_mlx_turbo_model(model_directory: Path) -> Path:
+    return _verify(
+        model_directory,
+        kind="Whisper large-v3-turbo MLX",
+        revision=WHISPER_MLX_TURBO_REVISION,
+        expected=WHISPER_MLX_TURBO_FILES,
+    )
+
+
+def verify_turbo_model(models_root: Path) -> Path:
+    """Verify the Turbo checkpoint this machine decodes with (MLX on Apple GPU)."""
+    from haizflow.core.apple_gpu import apple_gpu_asr_available
+
+    if apple_gpu_asr_available():
+        return verify_whisper_mlx_turbo_model(models_root / "whisper" / "mlx-large-v3-turbo")
+    return verify_whisper_turbo_model(models_root / "whisper" / "large-v3-turbo")
 
 
 def verify_whisperx_vad_model(model_directory: Path) -> Path:

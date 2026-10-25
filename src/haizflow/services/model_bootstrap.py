@@ -21,6 +21,7 @@ from pathlib import Path
 
 import certifi
 
+from haizflow.core.apple_gpu import apple_gpu_asr_available
 from haizflow.core.model_integrity import (
     ALIGNMENT_MODEL_BASE_URL,
     ALIGNMENT_MODELS,
@@ -56,6 +57,9 @@ from haizflow.core.model_integrity import (
     WHISPER_FILES,
     WHISPER_REPO,
     WHISPER_REVISION,
+    WHISPER_MLX_TURBO_FILES,
+    WHISPER_MLX_TURBO_REPO,
+    WHISPER_MLX_TURBO_REVISION,
     WHISPER_TURBO_FILES,
     WHISPER_TURBO_REPO,
     WHISPER_TURBO_REVISION,
@@ -71,7 +75,7 @@ from haizflow.core.model_integrity import (
     verify_omnivoice_sdk,
     verify_subtitle_ocr_models,
     verify_whisper_model,
-    verify_whisper_turbo_model,
+    verify_turbo_model,
     verify_whisperx_vad_model,
 )
 
@@ -147,7 +151,20 @@ def required_assets(device: str) -> tuple[ModelAsset, ...]:
             WHISPERX_VAD_SHA256,
         )
     )
-    if normalized_device == "gpu":
+    if normalized_device == "gpu" and apple_gpu_asr_available():
+        # Apple silicon runs Turbo on Metal; the CUDA checkpoint is unused.
+        assets.extend(
+            ModelAsset(
+                "whisper-turbo",
+                "Whisper large-v3-turbo speech recognition (Apple GPU)",
+                _hub_url(WHISPER_MLX_TURBO_REPO, WHISPER_MLX_TURBO_REVISION, filename),
+                f"whisper/mlx-large-v3-turbo/{filename}",
+                size,
+                digest,
+            )
+            for filename, (size, digest) in WHISPER_MLX_TURBO_FILES.items()
+        )
+    elif normalized_device == "gpu":
         assets.extend(
             ModelAsset(
                 "whisper-turbo",
@@ -518,7 +535,7 @@ def _download_asset(
 def _verify_installed_components(root: Path, device: str) -> None:
     verify_whisper_model(root / "whisper" / "small")
     if device == "gpu":
-        verify_whisper_turbo_model(root / "whisper" / "large-v3-turbo")
+        verify_turbo_model(root)
     verify_whisperx_vad_model(root / "whisperx-vad")
     if device == "gpu":
         verify_gpu_model(root / "hymt2-transformers")

@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 from functools import lru_cache
@@ -11,7 +12,7 @@ def _binary(name: str) -> str:
     resolved = shutil.which(name)
     if resolved:
         return resolved
-    return str(Path(BIN_DIR) / f"{name}.exe")
+    return str(Path(BIN_DIR) / (f"{name}.exe" if os.name == "nt" else name))
 
 
 @lru_cache(maxsize=1)
@@ -155,7 +156,10 @@ def get_video_dimensions(video_path: str, *, timeout_seconds: float = 15.0) -> t
             timeout=max(1.0, float(timeout_seconds)),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-        width, height = result.stdout.strip().split(",")
+        # FFmpeg 9 also lists a file's stream groups, which repeats the same
+        # stream's row; read the first one.
+        first = next(line for line in result.stdout.splitlines() if line.strip())
+        width, height = first.strip().split(",")[:2]
         return int(width), int(height)
     except Exception as exc:
         raise RuntimeError(f"Cannot read video dimensions: {exc}") from exc

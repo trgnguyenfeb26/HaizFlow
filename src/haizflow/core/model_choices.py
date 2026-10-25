@@ -1,5 +1,7 @@
 """Lightweight model/device choices shared by Core, workers and desktop UI."""
 
+from haizflow.core.apple_gpu import apple_gpu_asr_available
+
 RECOGNITION_CHOICES = frozenset({"small", "small-cpu", "small-gpu", "large-v3-turbo"})
 _FOUR_GB_GPU_LIMIT_BYTES = 5 * 1024**3
 _LEGACY_AUTO_FULL_VRAM_BYTES = 12 * 1024**3
@@ -51,7 +53,8 @@ def models_for_device(app_device: str, *, recognition: str, translation: str, vo
     """Keep compatible project choices, replacing GPU-only choices in CPU mode."""
     translation = project_translation_choice(translation, app_device, total_vram_bytes=total_vram_bytes)
     if app_device == "cpu":
-        if recognition in {"small-gpu", "large-v3-turbo"}:
+        # Apple silicon runs Turbo on its GPU without a CUDA processing mode.
+        if recognition == "small-gpu" or (recognition == "large-v3-turbo" and not apple_gpu_asr_available()):
             recognition = "small-cpu"
         if translation == "full":
             translation = "q4"
@@ -69,6 +72,8 @@ def recognition_context(choice: str, app_device: str) -> dict[str, str]:
         raise ValueError(f"Unsupported recognition model: {choice}")
     if choice == "small-cpu":
         device = "cpu"
+    elif choice == "large-v3-turbo" and apple_gpu_asr_available():
+        device = "gpu"
     elif choice in {"small-gpu", "large-v3-turbo"}:
         if device != "gpu":
             raise ValueError("Đang dùng chế độ CPU. Chọn model CPU hoặc chuyển sang GPU trong Cài đặt → Chung.")
@@ -77,6 +82,6 @@ def recognition_context(choice: str, app_device: str) -> dict[str, str]:
 
 def gpu_choice_blocked(app_device: str, *, recognition="small", translation="auto", voice="omnivoice") -> bool:
     return app_device != "gpu" and (
-        recognition in {"small-gpu", "large-v3-turbo"}
+        recognition == "small-gpu" or (recognition == "large-v3-turbo" and not apple_gpu_asr_available())
         or translation == "full" or str(voice).endswith("-gpu")
     )

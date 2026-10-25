@@ -33,14 +33,24 @@ def verify_assets(root: Path, device: str = "") -> Path:
             continue
         if device == "gpu" and path.startswith(("codec/", "v3-turbo/onnx_update/")):
             continue
+        if _uses_installed_sdk() and path.startswith("sdk/"):
+            continue
         selected[path] = (item["size"], item["sha256"])
     return _verify(root, kind="VieNeu", revision=CACHE_VERSION, expected=selected,
                    marker_name=f".haizflow-vieneu-{device or 'all'}-integrity.json")
 
 
-def prepare_runtime(root: Path) -> Path:
+def _uses_installed_sdk() -> bool:
+    """The pinned SDK wheels are win_amd64; macOS uses the same PyPI releases."""
+    return sys.platform == "darwin"
+
+
+def prepare_runtime(root: Path) -> Path | None:
     """Extract versioned wheels atomically, without changing other backends."""
     from haizflow.core.model_integrity import _verify
+
+    if _uses_installed_sdk():
+        return None
 
     wheels = {item["path"]: (item["size"], item["sha256"])
               for item in MANIFEST["assets"] if item["path"].startswith("sdk/")}
@@ -93,7 +103,8 @@ def worker_command(request_path: Path, device: str) -> list[str]:
         raise RuntimeError("Cần cập nhật gói Bộ xử lý CPU/GPU để chạy VieNeu.")
     # A source Core checkout may use .venv-core. Reuse the repository's AI
     # development interpreter without importing/installing AI into Core.
-    development_python = Path(__file__).resolve().parents[3] / ".venv" / "Scripts" / "python.exe"
+    venv = Path(__file__).resolve().parents[3] / ".venv"
+    development_python = venv / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     interpreter = str(development_python) if development_python.is_file() else sys.executable
     return [interpreter, "-m", "haizflow.pipeline.vieneu_tts", str(request_path)]
 
@@ -158,7 +169,7 @@ def synthesize_batch_to_mp3(items, video_id, *, device="cpu", language_id="vi",
                 references[source] = str(target)
             item["reference_path"] = references[source]
         status_path = work / "status.json"
-        request = dict(root=str(root), site=str(site), device=device, items=entries, status=str(status_path))
+        request = dict(root=str(root), site=str(site or ""), device=device, items=entries, status=str(status_path))
         request_path = work / "request.json"
         request_path.write_text(json.dumps(request, ensure_ascii=False), encoding="utf-8")
         environment = os.environ.copy()
@@ -297,8 +308,9 @@ def _worker(request):
     # Only use our newly extracted version, not abandoned site-packages from
     # older SDKs. Extraction happens in parent/manager before inference starts.
     site = prepare_runtime(root)
-    sys.path.insert(0, str(site))
-    _dll_directory = os.add_dll_directory(str(site)) if hasattr(os, "add_dll_directory") else None
+    if site is not None:
+        sys.path.insert(0, str(site))
+    _dll_directory = os.add_dll_directory(str(site)) if site and hasattr(os, "add_dll_directory") else None
     status = dict(completed=0, total=len(request["items"]), stage="loading_model", device=device,
                   policy=CACHE_VERSION, batch_size=1)
     path = Path(request["status"])

@@ -17,3 +17,6 @@ os.environ["HAIZFLOW_HOME"] = _test_runtime.name
 os.environ["RUNTIME_DATA_DIR"] = os.path.join(_test_runtime.name, "data")
 os.environ["HAIZFLOW_RESOURCE_ROOT"] = os.path.join(_test_runtime.name, "resources")
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+# The device matrix tests model CUDA/CPU machines; keep the Apple GPU path
+# out of them unless a test enables it explicitly.
+os.environ["HAIZFLOW_DISABLE_APPLE_GPU"] = "1"

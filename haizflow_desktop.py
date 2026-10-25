@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SRC = ROOT / "src"
 VENV_DIR = ROOT / ".venv"
-VENV_PYTHON = ROOT / ".venv" / "Scripts" / "python.exe"
+VENV_PYTHON = VENV_DIR / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
 
 
 def _restore_internal_standard_streams() -> None:

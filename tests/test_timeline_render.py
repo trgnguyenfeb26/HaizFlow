@@ -488,7 +488,8 @@ class TimelineRenderTests(unittest.TestCase):
     def test_watermark_font_has_a_safe_bundled_fallback(self):
         fallback = render._karaoke_font_directory() / render.KARAOKE_FONT_FILENAME
 
-        with mock.patch.dict(render.os.environ, {"WINDIR": r"Z:\\missing-windows"}):
+        with (mock.patch.dict(render.os.environ, {"WINDIR": r"Z:\\missing-windows"}),
+              mock.patch.object(render, "_macos_font_entries", return_value=())):
             self.assertEqual(render._watermark_font_path(), fallback)
 
     def test_empty_watermark_adds_no_filter(self):

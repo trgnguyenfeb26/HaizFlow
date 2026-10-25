@@ -20,6 +20,7 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from pathlib import Path
 
+from haizflow.core.apple_gpu import apple_gpu_asr_available
 from haizflow.core.model_integrity import (
     ALIGNMENT_MODELS,
     HYMT2_CPU_FILE,
@@ -31,7 +32,7 @@ from haizflow.core.model_integrity import (
     verify_omnivoice_sdk,
     verify_subtitle_ocr_models,
     verify_whisper_model,
-    verify_whisper_turbo_model,
+    verify_turbo_model,
     verify_whisperx_vad_model,
 )
 from haizflow.core.paths import (
@@ -56,11 +57,23 @@ PACK_PROTOCOL_VERSION = 1
 RESOURCE_STATE_VERSION = 1
 
 
-def _speaker_asset() -> ModelAsset:
+def _speaker_assets() -> tuple[ModelAsset, ModelAsset]:
+    """Embedding model plus the ECAPA profile classifier used for voice family
+    and speaker-change detection; without it identity falls back to pitch only."""
+    from haizflow.core.voice_profile_model import MODEL_FILE as PROFILE_FILE
+    from haizflow.core.voice_profile_model import MODEL_SHA256 as PROFILE_SHA256
+    from haizflow.core.voice_profile_model import MODEL_SIZE as PROFILE_SIZE
+    from haizflow.core.voice_profile_model import MODEL_URL as PROFILE_URL
     from haizflow.pipeline.speaker_identity import MODEL_FILE, MODEL_SHA256, MODEL_SIZE, MODEL_URL
 
-    return ModelAsset("speaker-identification", "Nhận diện người nói", MODEL_URL,
-                      f"speaker-identification/{MODEL_FILE}", MODEL_SIZE, MODEL_SHA256)
+    return (ModelAsset("speaker-identification", "Nhận diện người nói", MODEL_URL,
+                       f"speaker-identification/{MODEL_FILE}", MODEL_SIZE, MODEL_SHA256),
+            ModelAsset("speaker-voice-profile", "Phân loại âm sắc giọng nói", PROFILE_URL,
+                       f"speaker-identification/{PROFILE_FILE}", PROFILE_SIZE, PROFILE_SHA256))
+
+
+def _speaker_asset() -> ModelAsset:
+    return _speaker_assets()[0]
 
 
 ENGINE_REQUIRED_COMMANDS = {
@@ -302,12 +315,13 @@ def built_in_pack_definitions() -> tuple[ResourcePackDefinition, ...]:
             ("engine-vision-onnx",),
         ),
     ]
-    speaker_asset = _speaker_asset()
+    speaker_assets = _speaker_assets()
+    speaker_bytes = sum(asset.size for asset in speaker_assets)
     definitions.append(ResourcePackDefinition(
         pack_id="model-speaker-identification", label="Nhận diện người nói",
-        group="voice", version="1", capability="speaker",
-        dependencies=("engine-speaker-bundled",), assets=(speaker_asset,),
-        download_size=speaker_asset.size, installed_size=speaker_asset.size,
+        group="voice", version="2", capability="speaker",
+        dependencies=("engine-speaker-bundled",), assets=speaker_assets,
+        download_size=speaker_bytes, installed_size=speaker_bytes,
     ))
     release_metadata = _load_release_pack_metadata()
     resolved: list[ResourcePackDefinition] = []
@@ -745,6 +759,8 @@ class ResourcePackManager:
                               "gpu" if recognition_model in {"small-gpu", "turbo", "large-v3-turbo"} else device)
         if context.get("reference_asr"):
             recognition_device = device
+        if recognition_device == "gpu" and apple_gpu_asr_available():
+            recognition_device = "cpu"  # MLX runs in the same engine as the CPU tools.
         engine_pack = f"engine-{'cuda128-py313' if recognition_device == 'gpu' else 'cpu-py313'}"
         whisper_pack = (
             "model-whisper-turbo" if recognition_model in {"turbo", "large-v3-turbo"}
@@ -918,7 +934,7 @@ class ResourcePackManager:
             for language in ALIGNMENT_MODELS:
                 verify_alignment_model(root / "alignment", language)
         elif pack_id == "model-whisper-turbo":
-            verify_whisper_turbo_model(root / "whisper" / "large-v3-turbo")
+            verify_turbo_model(root)
             verify_whisperx_vad_model(root / "whisperx-vad")
             for language in ALIGNMENT_MODELS:
                 verify_alignment_model(root / "alignment", language)
@@ -938,9 +954,11 @@ class ResourcePackManager:
         elif pack_id == "model-subtitle-ocr":
             verify_subtitle_ocr_models(root / "subtitle-ocr")
         elif pack_id == "model-speaker-identification":
+            from haizflow.core.voice_profile_model import verify_voice_profile
             from haizflow.pipeline.speaker_identity import verify_model
 
             verify_model(root / "speaker-identification")
+            verify_voice_profile(root / "speaker-identification")
 
     def install(self, pack_id: str, progress: Callable[[str, ModelProgress], None], *, repair: bool = False) -> None:
         from haizflow.core.model_integrity import observe_verification

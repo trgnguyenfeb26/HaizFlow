@@ -10,6 +10,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Property, QAbstractListModel, QModelIndex, QObject, Qt, Signal, Slot
 
+from haizflow.core.apple_gpu import apple_gpu_asr_available
 from haizflow.core.hardware import validate_processing_device
 from haizflow.desktop.localization import QFileDialog
 from haizflow.desktop.presenters import format_memory_size
@@ -271,6 +272,8 @@ class ResourcePackController(QObject):
             if pack_id in {"engine-cpu-py313", "engine-cuda128-py313", "model-whisper-small", "model-whisper-turbo", "model-hymt2-cpu", "model-hymt2-gpu", "model-demucs-cpu", "model-demucs-gpu"}:
                 return False, "Chưa đọc được cấu hình máy. Hãy kiểm tra lại trước khi cài gói xử lý."
             return True, ""
+        if pack_id == "model-whisper-turbo" and apple_gpu_asr_available():
+            return True, ""  # Decoded by MLX on the Apple GPU, not CUDA.
         if pack_id in {"model-whisper-turbo", "model-hymt2-gpu"} and capabilities.gpu_supported \
                 and not capabilities.heavy_gpu_models_supported:
             return False, "Card 4 GB dùng Whisper Small trên GPU; chọn HY-MT2 CPU Q4 cho bước dịch."

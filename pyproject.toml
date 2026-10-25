@@ -26,6 +26,9 @@ dependencies = [
   "playwright==1.63.0",
   "pydub==0.25.1",
   "srt==3.5.3",
+  "keyring==25.7.0; sys_platform == 'darwin'",
+  # Whisper Turbo on the Apple GPU (Metal).
+  "mlx-whisper==0.4.3; sys_platform == 'darwin' and platform_machine == 'arm64'",
   "edge-tts @ https://github.com/rany2/edge-tts/archive/360fa8e1de354e1dda74c09bd695887d6a44df74.tar.gz#sha256=470d399a288b9ff9800988538ae31c99f06e589ec0ed67cb01141b29a005ab47",
 ]
 

@@ -1,6 +1,7 @@
 import math
 import os
 import re
+import sys
 import subprocess
 import struct
 import tempfile
@@ -112,6 +113,35 @@ def _windows_font_registry_entries() -> tuple[tuple[str, bool, bool, str], ...]:
     return tuple(entries)
 
 
+@lru_cache(maxsize=1)
+def _macos_font_entries() -> tuple[tuple[str, bool, bool, str], ...]:
+    """macOS has no font registry; index the standard font folders by file name."""
+    if sys.platform != "darwin":
+        return ()
+    folders = (Path("/System/Library/Fonts"), Path("/System/Library/Fonts/Supplemental"),
+               Path("/Library/Fonts"), Path.home() / "Library" / "Fonts")
+    entries: list[tuple[str, bool, bool, str]] = []
+    for folder in folders:
+        try:
+            candidates = sorted(folder.iterdir())
+        except OSError:
+            continue
+        for candidate in candidates:
+            if candidate.suffix.lower() not in {".ttf", ".otf", ".ttc"} or not candidate.is_file():
+                continue
+            # "Arial Bold Italic.ttf", "Impact.ttf", "Times New Roman Bold.ttf".
+            lowered = candidate.stem.replace("-", " ").casefold()
+            entries.append(
+                (
+                    _normalise_font_name(candidate.stem.replace("-", " ")),
+                    "bold" in lowered or "semibold" in lowered or "demibold" in lowered,
+                    "italic" in lowered or "oblique" in lowered,
+                    str(candidate),
+                )
+            )
+    return tuple(entries)
+
+
 def _font_path_details(
     font_family: str = "Arial",
     bold: bool = True,
@@ -143,7 +173,8 @@ def _font_path_details(
         if candidate.is_file():
             return candidate, True
     requested = _normalise_font_name(font_family)
-    matches = [item for item in _windows_font_registry_entries() if item[0] == requested]
+    matches = [item for item in (*_windows_font_registry_entries(), *_macos_font_entries())
+               if item[0] == requested]
     if matches:
         selected = min(
             matches,

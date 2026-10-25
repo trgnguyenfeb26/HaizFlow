@@ -30,7 +30,10 @@ def run_external_task(
     """Run an installed engine command, or return ``None`` for a bundled runtime."""
     launcher = "rpc_command" if command_name == "speaker_identification" else command_name
     command = installed_engine_command(capability, launcher, context)
-    source_worker = not command and isolate_source and os.name == "nt" and not getattr(sys, "frozen", False)
+    # macOS also isolates: AI runtimes then start with the library paths that
+    # config sets for child processes, and their memory leaves with them.
+    source_worker = (not command and isolate_source and (os.name == "nt" or sys.platform == "darwin")
+                     and not getattr(sys, "frozen", False))
     if source_worker:
         command = [sys.executable, "-m", "haizflow.engine.main"]
     if not command:

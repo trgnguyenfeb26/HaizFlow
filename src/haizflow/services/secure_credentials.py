@@ -1,10 +1,22 @@
-"""Small Windows Credential Manager wrapper for desktop-only secrets."""
+"""Desktop-only secrets: Windows Credential Manager, or the macOS Keychain."""
 
 from __future__ import annotations
 
 import ctypes
 import os
+import sys
 from ctypes import wintypes
+
+# macOS Keychain service; each HaizFlow credential target is one account.
+_KEYCHAIN_SERVICE = "HaizFlow"
+
+
+def _keychain():
+    if sys.platform != "darwin":
+        return None
+    import keyring  # noqa: PLC0415
+
+    return keyring
 
 
 _CRED_TYPE_GENERIC = 1
@@ -54,6 +66,9 @@ def write_secret(target: str, secret: str, *, username: str = "HaizFlow") -> Non
     value = str(secret or "")
     if not target_name or not value:
         raise ValueError("Credential target and secret are required.")
+    if keychain := _keychain():
+        keychain.set_password(_KEYCHAIN_SERVICE, target_name, value)
+        return
     encoded = value.encode("utf-16-le")
     blob = (ctypes.c_ubyte * len(encoded)).from_buffer_copy(encoded)
     credential = _CredentialW()
@@ -72,6 +87,8 @@ def read_secret(target: str) -> str:
     target_name = str(target or "").strip()
     if not target_name:
         return ""
+    if keychain := _keychain():
+        return keychain.get_password(_KEYCHAIN_SERVICE, target_name) or ""
     library = _advapi32()
     pointer = ctypes.POINTER(_CredentialW)()
     if not library.CredReadW(target_name, _CRED_TYPE_GENERIC, 0, ctypes.byref(pointer)):
@@ -92,6 +109,14 @@ def delete_secret(target: str) -> bool:
     target_name = str(target or "").strip()
     if not target_name:
         return False
+    if keychain := _keychain():
+        from keyring.errors import PasswordDeleteError  # noqa: PLC0415
+
+        try:
+            keychain.delete_password(_KEYCHAIN_SERVICE, target_name)
+        except PasswordDeleteError:
+            return False
+        return True
     library = _advapi32()
     if library.CredDeleteW(target_name, _CRED_TYPE_GENERIC, 0):
         return True
