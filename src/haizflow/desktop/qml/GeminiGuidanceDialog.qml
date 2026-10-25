@@ -9,10 +9,10 @@ AppDialog {
     property string owner: ""
     property string translationStyle: "balanced"
     readonly property var styleOptions: [
-        { label: qsTr("Cân bằng"), value: "balanced", description: qsTr("Rõ nghĩa, trung tính và dễ đọc.") },
-        { label: qsTr("Sát nghĩa"), value: "literal", description: qsTr("Bám sát câu gốc, hạn chế diễn đạt lại.") },
-        { label: qsTr("Tự nhiên"), value: "natural", description: qsTr("Ưu tiên lời thoại tự nhiên trong ngôn ngữ đích.") },
-        { label: qsTr("Linh hoạt"), value: "adaptive", description: qsTr("Chuyển thành ngữ, hài hước và cảm xúc phù hợp; không thêm ý.") }
+        { label: qsTr("Cân bằng"), value: "balanced", description: qsTr("Giang hồ mạng, bựa, hài hước, văng tục tự nhiên vỉa hè.") },
+        { label: qsTr("Sát nghĩa"), value: "literal", description: qsTr("Bám sát câu gốc nhưng dịch thô bỉ, bựa đời và chửi bậy chuẩn âm.") },
+        { label: qsTr("Tự nhiên"), value: "natural", description: qsTr("Khẩu ngữ đường phố, xưng hô mày - tao - bố mày, văng tục thoải mái.") },
+        { label: qsTr("Linh hoạt"), value: "adaptive", description: qsTr("Bựa nhất - Tục cực độ, chửi thề xả láng, cà khịa cay độc không khoan nhượng.") }
     ]
     signal confirmed(string instructions, string glossary, string owner, string style)
     title: qsTr("Văn phong và hướng dẫn dịch")
@@ -59,7 +59,7 @@ AppDialog {
             id: instructionsEditor
             objectName: "geminiInstructionsEditor"
             accessibleName: qsTr("Bối cảnh và hướng dẫn dịch")
-            placeholderText: qsTr("Ví dụ: Bối cảnh hiện đại. Dịch tự nhiên, ngắn gọn. Giữ nguyên sắc thái của từng nhân vật.")
+            placeholderText: qsTr("Ví dụ: Bối cảnh giang hồ tấu hài. Dịch cực kỳ bựa và tục tĩu, văng tục xả láng, xưng hô mày - tao - bố mày, chửi thật gắt.")
         }
     }
     SettingLabel { text: qsTr("Tên nhân vật và xưng hô") }
